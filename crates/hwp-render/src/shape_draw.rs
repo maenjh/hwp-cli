@@ -48,7 +48,14 @@ pub fn draw_ir_shapes(shapes: &[ShapeGeom], page: &mut PageList) {
         if commands.len() < 2 {
             continue;
         }
-        let fill = (s.fill != 0xFFFF_FFFF).then_some(Fill::Solid(s.fill));
+        let fill = match &s.fill_gradient {
+            Some(g) if g.stops.len() >= 2 => Some(Fill::Gradient(Gradient {
+                radial: g.radial,
+                angle_deg: g.angle_deg,
+                stops: g.stops.clone(),
+            })),
+            _ => (s.fill != 0xFFFF_FFFF).then_some(Fill::Solid(s.fill)),
+        };
         let stroke = (s.border_width > 0)
             .then_some((s.border_color, (s.border_width as f32 / 100.0).max(0.1)));
         if fill.is_none() && stroke.is_none() {
@@ -561,6 +568,7 @@ mod tests {
             h: 15000,
             points: Vec::new(),
             fill: 0x0000_CCFF,
+            fill_gradient: None,
             border_color: 0x00FF_0000,
             border_width: 100,
         };
@@ -593,11 +601,51 @@ mod tests {
             h: 1000,
             points: Vec::new(),
             fill: 0xFFFF_FFFF,
+            fill_gradient: None,
             border_color: 0xFFFF_FFFF,
             border_width: 0,
         };
         draw_ir_shapes(&[invisible], &mut p2);
         assert!(p2.items.is_empty(), "보이지 않는 도형은 생략");
+    }
+
+    #[test]
+    fn ir_그러데이션_채움() {
+        use hwp_model::GradientSpec;
+        let mut page = PageList {
+            width_pt: 600.0,
+            height_pt: 800.0,
+            items: Vec::new(),
+        };
+        // fill_gradient가 있으면 단색 fill을 무시하고 Gradient로 채운다.
+        let shape = ShapeGeom {
+            kind: ShapeKind::Rect,
+            x: 0,
+            y: 0,
+            w: 10000,
+            h: 10000,
+            points: Vec::new(),
+            fill: 0x0000_00FF, // 무시되어야 함
+            fill_gradient: Some(GradientSpec {
+                radial: false,
+                angle_deg: 90.0,
+                stops: vec![(0.0, 0x0000_00FF), (1.0, 0x00FF_0000)],
+            }),
+            border_color: 0xFFFF_FFFF,
+            border_width: 0,
+        };
+        draw_ir_shapes(&[shape], &mut page);
+        assert_eq!(page.items.len(), 1);
+        let Item::Path { fill, .. } = &page.items[0] else {
+            panic!("Path가 아님");
+        };
+        let Some(Fill::Gradient(g)) = fill else {
+            panic!("Gradient 채움이어야 함");
+        };
+        assert!(!g.radial);
+        assert_eq!(g.stops.len(), 2);
+        assert_eq!(g.stops[0].1, 0x0000_00FF);
+        assert_eq!(g.stops[1].1, 0x00FF_0000);
     }
 
     #[test]
