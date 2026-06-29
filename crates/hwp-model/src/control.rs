@@ -242,6 +242,13 @@ pub struct ShapeGeom {
     pub border_color: u32,
     /// 테두리 굵기 HWPUNIT(0이면 선 없음).
     pub border_width: i32,
+    /// 둥근 사각형 모서리 곡률(%, 0=직각). Rect에만 의미.
+    #[serde(default, skip_serializing_if = "is_zero_u8")]
+    pub round_ratio: u8,
+}
+
+fn is_zero_u8(v: &u8) -> bool {
+    *v == 0
 }
 
 /// 그러데이션 채움 명세(렌더러 display::Gradient로 변환).
