@@ -9,6 +9,11 @@
 # 골든 기준 이미지는 커밋하지 않음 (레시피 fixtures/golden/README.md만 커밋)
 /fixtures/golden/*.png
 
+# 테스트용 hwp/hwpx 문서는 저장소에 동봉하지 않는다(로컬 전용 — fixtures/README.md의 출처에서 받아 배치).
+# 없으면 관련 테스트는 자동 skip된다.
+/fixtures/hwp5/
+/fixtures/hwpx/
+
 # HWP 5.0 스펙 문서는 한컴 저작물 — 저장소에 동봉하지 않음(공식 배포처 링크만, docs/README.md 참고).
 # 로컬 참고용으로 docs/에 두더라도 추적하지 않는다.
 /docs/*.pdf

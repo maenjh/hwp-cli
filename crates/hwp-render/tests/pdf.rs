@@ -14,8 +14,14 @@ fn fixture(rel: &str) -> PathBuf {
         .join(rel)
 }
 
-fn load(rel: &str) -> hwp_model::Document {
-    hwp5::read_document(&fixture(rel)).unwrap().document
+/// fixture 문서는 저장소에 없으므로(로컬 전용 — fixtures/README.md) 없으면 None → 테스트 skip.
+fn load_or_skip(rel: &str) -> Option<hwp_model::Document> {
+    let p = fixture(rel);
+    if !p.exists() {
+        eprintln!("스킵: fixture 없음 ({}) — fixtures/README.md 참고", p.display());
+        return None;
+    }
+    Some(hwp5::read_document(&p).unwrap().document)
 }
 
 /// PDF 바이트 안에서 부분 바이트열 출현 횟수.
@@ -31,7 +37,7 @@ fn count(haystack: &[u8], needle: &[u8]) -> usize {
 
 #[test]
 fn 유효한_pdf_구조() {
-    let doc = load("hwp5/hello_world.hwp");
+    let Some(doc) = load_or_skip("hwp5/hello_world.hwp") else { return };
     let out = render_document_pdf(&doc, &RenderOptions::default(), None).unwrap();
     let pdf = &out.data;
 
@@ -57,7 +63,7 @@ fn 유효한_pdf_구조() {
 
 #[test]
 fn 페이지_수_일치() {
-    let doc = load("hwp5/annual_report.hwp");
+    let Some(doc) = load_or_skip("hwp5/annual_report.hwp") else { return };
     let opts = RenderOptions::default();
     let total = count_pages(&doc, &opts);
     assert!(total > 1, "멀티페이지 문서여야 함: {total}쪽");
@@ -75,7 +81,7 @@ fn 페이지_수_일치() {
 
 #[test]
 fn 페이지_선택() {
-    let doc = load("hwp5/annual_report.hwp");
+    let Some(doc) = load_or_skip("hwp5/annual_report.hwp") else { return };
     let opts = RenderOptions::default();
     let total = count_pages(&doc, &opts);
     assert!(total >= 3);
@@ -88,7 +94,7 @@ fn 페이지_선택() {
 #[test]
 fn 표_문서_렌더() {
     // 표(선·셀 채움·텍스트)를 포함해도 유효한 PDF가 나와야 한다.
-    let doc = load("hwp5/work_report.hwp");
+    let Some(doc) = load_or_skip("hwp5/work_report.hwp") else { return };
     let out = render_document_pdf(&doc, &RenderOptions::default(), None).unwrap();
     assert!(out.data.starts_with(b"%PDF-"));
     assert!(out.data.windows(5).any(|w| w == b"%%EOF"));
@@ -96,7 +102,7 @@ fn 표_문서_렌더() {
 
 #[test]
 fn 빈_문서_렌더() {
-    let doc = load("hwp5/bookmark.hwp");
+    let Some(doc) = load_or_skip("hwp5/bookmark.hwp") else { return };
     let out = render_document_pdf(&doc, &RenderOptions::default(), None).unwrap();
     // 텍스트가 없어도 유효한 1쪽 PDF.
     assert!(out.data.starts_with(b"%PDF-"));
