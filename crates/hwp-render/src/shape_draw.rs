@@ -88,13 +88,30 @@ fn ir_shape_path(s: &ShapeGeom) -> Vec<PathCmd> {
         cmds
     };
     match s.kind {
-        ShapeKind::Rect => vec![
-            PathCmd::MoveTo(x0, y0),
-            PathCmd::LineTo(x0 + w, y0),
-            PathCmd::LineTo(x0 + w, y0 + h),
-            PathCmd::LineTo(x0, y0 + h),
-            PathCmd::Close,
-        ],
+        ShapeKind::Rect => {
+            let (x0, y0, w, h) = (x0 as f64, y0 as f64, w as f64, h as f64);
+            let radius = (s.round_ratio.min(100) as f64 / 100.0) * (w.abs().min(h.abs()) / 2.0);
+            if radius > 0.1 {
+                rounded_quad_path(
+                    [
+                        (x0, y0),
+                        (x0 + w, y0),
+                        (x0 + w, y0 + h),
+                        (x0, y0 + h),
+                    ],
+                    radius,
+                    &|x, y| (x as f32, y as f32),
+                )
+            } else {
+                vec![
+                    PathCmd::MoveTo(x0 as f32, y0 as f32),
+                    PathCmd::LineTo((x0 + w) as f32, y0 as f32),
+                    PathCmd::LineTo((x0 + w) as f32, (y0 + h) as f32),
+                    PathCmd::LineTo(x0 as f32, (y0 + h) as f32),
+                    PathCmd::Close,
+                ]
+            }
+        }
         ShapeKind::Ellipse | ShapeKind::Arc => {
             let (cx, cy) = ((x0 + w / 2.0) as f64, (y0 + h / 2.0) as f64);
             ellipse_path(
@@ -385,10 +402,19 @@ fn geometry(tag: u16, d: &[u8], s: &Style, origin: (f64, f64)) -> Option<Vec<Pat
             Some(vec![PathCmd::MoveTo(a, b), PathCmd::LineTo(c, e)])
         }
         SC_RECTANGLE => {
-            // BYTE 곡률% + 4×(x,y). (곡률>0 둥근모서리는 미지원 — 직각 근사)
+            // BYTE 곡률% + 4×(x,y). 곡률>0이면 둥근 모서리(원호 근사).
+            let curv = (*d.first()? as u32).min(100);
+            let corners = [p(1)?, p(9)?, p(17)?, p(25)?];
+            if curv > 0 {
+                let e01 = dist(corners[0], corners[1]);
+                let e12 = dist(corners[1], corners[2]);
+                let radius = (curv as f64 / 100.0) * (e01.min(e12) / 2.0);
+                if radius > 1.0 {
+                    return Some(rounded_quad_path(corners, radius, &to_pt));
+                }
+            }
             let mut cmds = Vec::with_capacity(6);
-            for i in 0..4 {
-                let (x, y) = p(1 + i * 8)?;
+            for (i, &(x, y)) in corners.iter().enumerate() {
                 let (px, py) = to_pt(x, y);
                 cmds.push(if i == 0 {
                     PathCmd::MoveTo(px, py)
@@ -451,6 +477,70 @@ fn geometry(tag: u16, d: &[u8], s: &Style, origin: (f64, f64)) -> Option<Vec<Pat
         }
         _ => None,
     }
+}
+
+/// 두 점 사이 유클리드 거리.
+fn dist(a: (f64, f64), b: (f64, f64)) -> f64 {
+    let (dx, dy) = (b.0 - a.0, b.1 - a.1);
+    (dx * dx + dy * dy).sqrt()
+}
+
+/// 둥근 모서리 사각형(임의 4점) 경로. corners는 순서대로 이은 4점,
+/// radius는 corners와 같은 좌표계의 모서리 반경. map으로 출력 좌표 변환.
+/// 각 모서리는 90° 원호를 큐빅 베지에(KAPPA)로 근사한다.
+fn rounded_quad_path(
+    corners: [(f64, f64); 4],
+    radius: f64,
+    map: &impl Fn(f64, f64) -> (f32, f32),
+) -> Vec<PathCmd> {
+    let unit = |from: (f64, f64), to: (f64, f64)| -> (f64, f64) {
+        let (dx, dy) = (to.0 - from.0, to.1 - from.1);
+        let len = (dx * dx + dy * dy).sqrt();
+        if len < 1e-9 {
+            (0.0, 0.0)
+        } else {
+            (dx / len, dy / len)
+        }
+    };
+    // 각 모서리의 진입(이전 변 쪽)·이탈(다음 변 쪽) 점. 인접 변 길이의
+    // 절반으로 반경을 캡해 곡선 겹침을 막는다.
+    let mut t_in = [(0.0, 0.0); 4];
+    let mut t_out = [(0.0, 0.0); 4];
+    for i in 0..4 {
+        let c = corners[i];
+        let prev = corners[(i + 3) % 4];
+        let next = corners[(i + 1) % 4];
+        let r_prev = radius.min(dist(c, prev) / 2.0);
+        let r_next = radius.min(dist(c, next) / 2.0);
+        let up = unit(c, prev);
+        let un = unit(c, next);
+        t_in[i] = (c.0 + up.0 * r_prev, c.1 + up.1 * r_prev);
+        t_out[i] = (c.0 + un.0 * r_next, c.1 + un.1 * r_next);
+    }
+    let m = |p: (f64, f64)| map(p.0, p.1);
+    let mut cmds = Vec::with_capacity(13);
+    let (sx, sy) = m(t_out[0]);
+    cmds.push(PathCmd::MoveTo(sx, sy));
+    for i in 1..=4 {
+        let idx = i % 4;
+        let (ax, ay) = m(t_in[idx]);
+        cmds.push(PathCmd::LineTo(ax, ay));
+        let c = corners[idx];
+        let cp1 = (
+            t_in[idx].0 + (c.0 - t_in[idx].0) * KAPPA,
+            t_in[idx].1 + (c.1 - t_in[idx].1) * KAPPA,
+        );
+        let cp2 = (
+            t_out[idx].0 + (c.0 - t_out[idx].0) * KAPPA,
+            t_out[idx].1 + (c.1 - t_out[idx].1) * KAPPA,
+        );
+        let (c1x, c1y) = m(cp1);
+        let (c2x, c2y) = m(cp2);
+        let (ox, oy) = m(t_out[idx]);
+        cmds.push(PathCmd::CubicTo(c1x, c1y, c2x, c2y, ox, oy));
+    }
+    cmds.push(PathCmd::Close);
+    cmds
 }
 
 /// 중심 C와 두 축 벡터(a1, a2)로 타원을 4개 큐빅 베지에로 근사.
@@ -571,6 +661,7 @@ mod tests {
             fill_gradient: None,
             border_color: 0x00FF_0000,
             border_width: 100,
+            round_ratio: 0,
         };
         draw_ir_shapes(&[rect], &mut page);
         assert_eq!(page.items.len(), 1);
@@ -604,6 +695,7 @@ mod tests {
             fill_gradient: None,
             border_color: 0xFFFF_FFFF,
             border_width: 0,
+            round_ratio: 0,
         };
         draw_ir_shapes(&[invisible], &mut p2);
         assert!(p2.items.is_empty(), "보이지 않는 도형은 생략");
@@ -633,6 +725,7 @@ mod tests {
             }),
             border_color: 0xFFFF_FFFF,
             border_width: 0,
+            round_ratio: 0,
         };
         draw_ir_shapes(&[shape], &mut page);
         assert_eq!(page.items.len(), 1);
@@ -664,5 +757,58 @@ mod tests {
             assert!(g.radial);
             assert!((g.stops[0].0 - 0.0).abs() < 0.01);
         }
+    }
+
+    #[test]
+    fn 둥근모서리_사각형_경로() {
+        use hwp_model::{ShapeGeom, ShapeKind};
+        let base = ShapeGeom {
+            kind: ShapeKind::Rect,
+            x: 0,
+            y: 0,
+            w: 20000, // 200pt
+            h: 10000, // 100pt
+            points: Vec::new(),
+            fill: 0x0000_00FF,
+            fill_gradient: None,
+            border_color: 0xFFFF_FFFF,
+            border_width: 0,
+            round_ratio: 0,
+        };
+        // 직각: Move + Line×3 + Close = 5개, CubicTo 없음.
+        let sharp = ir_shape_path(&base);
+        assert_eq!(sharp.len(), 5);
+        assert!(!sharp.iter().any(|c| matches!(c, PathCmd::CubicTo(..))));
+
+        // 곡률 50%: 네 모서리 원호(CubicTo 4개) + 변(LineTo 4개) + Move + Close.
+        let round = ir_shape_path(&ShapeGeom {
+            round_ratio: 50,
+            ..base.clone()
+        });
+        let cubics = round
+            .iter()
+            .filter(|c| matches!(c, PathCmd::CubicTo(..)))
+            .count();
+        assert_eq!(cubics, 4, "네 모서리마다 원호 1개");
+        assert!(matches!(round.last(), Some(PathCmd::Close)));
+        // 반경 = 50% × min(200,100)/2 = 25pt. 시작점은 우상단으로 가는 변 위
+        // (모서리에서 radius만큼 떨어진 점) → x ≈ radius(25), y = 0.
+        let PathCmd::MoveTo(sx, sy) = round[0] else {
+            panic!("MoveTo로 시작해야");
+        };
+        assert!((sx - 25.0).abs() < 0.5, "시작 x≈25, 실제 {sx}");
+        assert!((sy - 0.0).abs() < 0.5, "시작 y≈0, 실제 {sy}");
+
+        // 곡률 100%: 반경 = min/2 = 50pt (캡), 여전히 CubicTo 4개.
+        let full = ir_shape_path(&ShapeGeom {
+            round_ratio: 100,
+            ..base
+        });
+        assert_eq!(
+            full.iter()
+                .filter(|c| matches!(c, PathCmd::CubicTo(..)))
+                .count(),
+            4
+        );
     }
 }

@@ -188,7 +188,15 @@ fn parse_paragraph(
                         };
                         if !empty {
                             if let Some(kind) = shape_kind(&name) {
-                                collect_shape(reader, &name, kind, &mut generic, warnings)?;
+                                // 둥근 사각형: <hp:rect ratio="N"> (모서리 곡률 %).
+                                let round_ratio = if kind == ShapeKind::Rect {
+                                    attr_i32(e, "ratio").unwrap_or(0).clamp(0, 100) as u8
+                                } else {
+                                    0
+                                };
+                                collect_shape(
+                                    reader, &name, kind, round_ratio, &mut generic, warnings,
+                                )?;
                             } else {
                                 collect_sub_lists(reader, &name, &mut generic, warnings)?;
                             }
@@ -800,6 +808,7 @@ fn collect_shape(
     reader: &mut XmlReader<'_>,
     end_name: &[u8],
     kind: ShapeKind,
+    round_ratio: u8,
     generic: &mut GenericControl,
     warnings: &mut Vec<String>,
 ) -> Result<()> {
@@ -893,6 +902,7 @@ fn collect_shape(
             fill_gradient,
             border_color,
             border_width,
+            round_ratio,
         });
     }
     Ok(())
