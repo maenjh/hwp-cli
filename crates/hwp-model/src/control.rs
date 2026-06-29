@@ -233,12 +233,24 @@ pub struct ShapeGeom {
     /// 선/다각형/곡선의 점(HWPUNIT, 경계 상자 원점 기준).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub points: Vec<(i32, i32)>,
-    /// 채움색 COLORREF(없음=0xFFFFFFFF).
+    /// 채움색 COLORREF(없음=0xFFFFFFFF). fill_gradient가 Some면 무시.
     pub fill: u32,
+    /// 그러데이션 채움(있으면 fill보다 우선).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fill_gradient: Option<GradientSpec>,
     /// 테두리 색 COLORREF(없음=0xFFFFFFFF).
     pub border_color: u32,
     /// 테두리 굵기 HWPUNIT(0이면 선 없음).
     pub border_width: i32,
+}
+
+/// 그러데이션 채움 명세(렌더러 display::Gradient로 변환).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct GradientSpec {
+    pub radial: bool,
+    pub angle_deg: f32,
+    /// (위치 0..1, COLORREF). 위치 오름차순.
+    pub stops: Vec<(f32, u32)>,
 }
 
 /// LIST_HEADER 하나가 여는 문단 리스트.

@@ -11,8 +11,9 @@
 //!   (`hp:subList` 문단은 텍스트 추출을 위해 재귀 수집)
 
 use hwp_model::{
-    Cell, CharShapeId, Control, GenericControl, HwpChar, HwpUnit, LineSeg, PageDef, ParaShapeId,
-    Paragraph, ParagraphList, Section, SectionDef, ShapeGeom, ShapeKind, StyleId, Table,
+    Cell, CharShapeId, Control, GenericControl, GradientSpec, HwpChar, HwpUnit, LineSeg, PageDef,
+    ParaShapeId, Paragraph, ParagraphList, Section, SectionDef, ShapeGeom, ShapeKind, StyleId,
+    Table,
 };
 use quick_xml::Reader;
 use quick_xml::events::{BytesStart, Event};
@@ -807,34 +808,33 @@ fn collect_shape(
     let mut border_color = 0xFFFF_FFFFu32;
     let mut border_width = 0i32;
     let mut points: Vec<(i32, i32)> = Vec::new();
-    let mut read_attrs = |e: &BytesStart<'_>| {
-        match e.local_name().as_ref() {
-            b"pos" => {
-                x = attr_offset_i32(e, "horzOffset").unwrap_or(x);
-                y = attr_offset_i32(e, "vertOffset").unwrap_or(y);
-            }
-            b"sz" => {
-                w = attr_i32(e, "width").unwrap_or(w);
-                h = attr_i32(e, "height").unwrap_or(h);
-            }
-            b"lineShape" => {
-                if let Some(c) = attr(e, "color") {
-                    border_color = parse_color(&c);
-                }
-                border_width = attr_i32(e, "width").unwrap_or(border_width);
-            }
-            b"winBrush" => {
-                if let Some(c) = attr(e, "faceColor") {
-                    fill = parse_color(&c);
-                }
-            }
-            n if n.starts_with(b"pt") => {
-                if let (Some(px), Some(py)) = (attr_i32(e, "x"), attr_i32(e, "y")) {
-                    points.push((px, py));
-                }
-            }
-            _ => {}
+    let mut fill_gradient: Option<GradientSpec> = None;
+    let mut read_attrs = |e: &BytesStart<'_>| match e.local_name().as_ref() {
+        b"pos" => {
+            x = attr_offset_i32(e, "horzOffset").unwrap_or(x);
+            y = attr_offset_i32(e, "vertOffset").unwrap_or(y);
         }
+        b"sz" => {
+            w = attr_i32(e, "width").unwrap_or(w);
+            h = attr_i32(e, "height").unwrap_or(h);
+        }
+        b"lineShape" => {
+            if let Some(c) = attr(e, "color") {
+                border_color = parse_color(&c);
+            }
+            border_width = attr_i32(e, "width").unwrap_or(border_width);
+        }
+        b"winBrush" => {
+            if let Some(c) = attr(e, "faceColor") {
+                fill = parse_color(&c);
+            }
+        }
+        n if n.starts_with(b"pt") => {
+            if let (Some(px), Some(py)) = (attr_i32(e, "x"), attr_i32(e, "y")) {
+                points.push((px, py));
+            }
+        }
+        _ => {}
     };
 
     let mut depth = 1u32;
@@ -860,6 +860,8 @@ fn collect_shape(
                         }
                     }
                     generic.paragraph_lists.push(list);
+                } else if n == b"gradation" {
+                    fill_gradient = parse_gradation(reader, &e)?;
                 } else {
                     read_attrs(&e);
                     if n == end_name {
@@ -888,11 +890,51 @@ fn collect_shape(
             h,
             points,
             fill,
+            fill_gradient,
             border_color,
             border_width,
         });
     }
     Ok(())
+}
+
+/// `<hp:gradation>` — 그러데이션 채움. type(LINEAR/RADIAL/...), angle, 자식
+/// `hp:color value="#.."` 들을 균등 위치로 stop화한다.
+fn parse_gradation(
+    reader: &mut XmlReader<'_>,
+    start: &BytesStart<'_>,
+) -> Result<Option<GradientSpec>> {
+    let gtype = attr(start, "type").unwrap_or_default();
+    // LINEAR=선형, 그 외(RADIAL/CIRCLE/CONICAL/SQUARE)는 방사형 근사.
+    let radial = !gtype.eq_ignore_ascii_case("LINEAR");
+    let angle_deg = attr_i32(start, "angle").unwrap_or(0) as f32;
+    let mut colors: Vec<u32> = Vec::new();
+    loop {
+        match next_event(reader)? {
+            Event::Empty(e) | Event::Start(e) if e.local_name().as_ref() == b"color" => {
+                if let Some(v) = attr(&e, "value") {
+                    colors.push(parse_color(&v));
+                }
+            }
+            Event::End(e) if e.local_name().as_ref() == b"gradation" => break,
+            Event::Eof => break,
+            _ => {}
+        }
+    }
+    if colors.len() < 2 {
+        return Ok(None);
+    }
+    let last = (colors.len() - 1) as f32;
+    let stops = colors
+        .into_iter()
+        .enumerate()
+        .map(|(i, c)| (i as f32 / last, c))
+        .collect();
+    Ok(Some(GradientSpec {
+        radial,
+        angle_deg,
+        stops,
+    }))
 }
 
 /// `<hp:linesegarray>` — 줄 배치 정보.
@@ -979,5 +1021,52 @@ mod page_ctrl_tests {
         assert_eq!(head_foot_data(&e), vec![0, 0, 0, 0, 0x02, 0, 0, 0]);
         let odd = elem("hp:footer", &[("id", "3"), ("applyPageType", "ODD")]);
         assert_eq!(head_foot_data(&odd), vec![0x02, 0, 0, 0, 0x03, 0, 0, 0]);
+    }
+
+    /// 완결된 `<hp:gradation>…` 문서를 열어 시작 태그를 소비하고 parse_gradation 호출.
+    fn run_gradation(xml: &str) -> Option<GradientSpec> {
+        let mut reader = Reader::from_str(xml);
+        let start = match reader.read_event().unwrap() {
+            Event::Start(e) => e.into_owned(),
+            other => panic!("gradation 시작 태그 기대, 실제 {other:?}"),
+        };
+        parse_gradation(&mut reader, &start).unwrap()
+    }
+
+    /// 선형 그러데이션: type=LINEAR, 색 2개 → stop 0.0/1.0 균등.
+    #[test]
+    fn gradation_선형_2색() {
+        let g = run_gradation(
+            r##"<hp:gradation type="LINEAR" angle="90"><hp:color value="#FF0000"/><hp:color value="#0000FF"/></hp:gradation>"##,
+        )
+        .unwrap();
+        assert!(!g.radial);
+        assert_eq!(g.angle_deg, 90.0);
+        assert_eq!(g.stops.len(), 2);
+        assert_eq!(g.stops[0], (0.0, parse_color("#FF0000")));
+        assert_eq!(g.stops[1], (1.0, parse_color("#0000FF")));
+    }
+
+    /// 방사형 그러데이션: type=RADIAL → radial=true, 색 3개 → 0/0.5/1.0.
+    #[test]
+    fn gradation_방사_3색() {
+        let g = run_gradation(
+            r##"<hp:gradation type="RADIAL"><hp:color value="#000000"/><hp:color value="#808080"/><hp:color value="#FFFFFF"/></hp:gradation>"##,
+        )
+        .unwrap();
+        assert!(g.radial);
+        assert_eq!(g.stops.len(), 3);
+        assert!((g.stops[1].0 - 0.5).abs() < 0.001);
+    }
+
+    /// 색이 1개 이하면 그러데이션 없음(None).
+    #[test]
+    fn gradation_단색_무시() {
+        assert!(
+            run_gradation(
+                r##"<hp:gradation type="LINEAR"><hp:color value="#FF0000"/></hp:gradation>"##
+            )
+            .is_none()
+        );
     }
 }
