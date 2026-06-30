@@ -20,10 +20,21 @@ pub fn run(
     set_fields: &[String],
     set_formats: &[String],
     set_aligns: &[String],
+    insert_paras: &[String],
+    insert_paras_before: &[String],
+    delete_paras: &[String],
+    add_rows: &[String],
+    delete_rows: &[String],
     verify: bool,
 ) -> anyhow::Result<()> {
     let mut doc = load_document(input)?;
     let mut edits = 0usize;
+    // 구조 편집(문단/행 추가·삭제)은 삽입 불변식 적용을 위해 합성 경로로 써야 한다.
+    let structural = !insert_paras.is_empty()
+        || !insert_paras_before.is_empty()
+        || !delete_paras.is_empty()
+        || !add_rows.is_empty()
+        || !delete_rows.is_empty();
 
     for spec in replaces {
         let (from, to) = spec
@@ -91,13 +102,67 @@ pub fn run(
         edits += n;
     }
 
+    for spec in insert_paras_before {
+        let (anchor, text) = spec.split_once("=>").with_context(|| {
+            format!("--insert-para-before 형식은 \"앵커=>텍스트\" 입니다: {spec:?}")
+        })?;
+        if hwp_convert::insert_paragraph(&mut doc, anchor, text, true) {
+            eprintln!("문단 삽입(앞): {anchor:?} 앞에 {text:?}");
+            edits += 1;
+        } else {
+            eprintln!("경고: 앵커 {anchor:?}를 찾지 못했습니다");
+        }
+    }
+
+    for spec in insert_paras {
+        let (anchor, text) = spec
+            .split_once("=>")
+            .with_context(|| format!("--insert-para 형식은 \"앵커=>텍스트\" 입니다: {spec:?}"))?;
+        if hwp_convert::insert_paragraph(&mut doc, anchor, text, false) {
+            eprintln!("문단 삽입(뒤): {anchor:?} 뒤에 {text:?}");
+            edits += 1;
+        } else {
+            eprintln!("경고: 앵커 {anchor:?}를 찾지 못했습니다");
+        }
+    }
+
+    for matching in delete_paras {
+        let n = hwp_convert::delete_paragraph(&mut doc, matching);
+        if n == 0 {
+            eprintln!("경고: 삭제 대상 문단 {matching:?}를 찾지 못했습니다");
+        } else {
+            eprintln!("문단 삭제: {matching:?} ({n}건)");
+        }
+        edits += n;
+    }
+
+    for spec in add_rows {
+        let ti: usize = spec.trim().parse().with_context(|| {
+            format!("--add-row 형식은 표 인덱스(예: \"0\") 입니다: {spec:?}")
+        })?;
+        hwp_convert::add_table_row(&mut doc, ti).map_err(|e| anyhow::anyhow!(e))?;
+        eprintln!("표 행 추가: 표{ti}");
+        edits += 1;
+    }
+
+    for spec in delete_rows {
+        let (t, r) = spec
+            .split_once(':')
+            .with_context(|| format!("--delete-row 형식은 \"표:행\" 입니다: {spec:?}"))?;
+        let ti: usize = t.trim().parse().context("표 인덱스")?;
+        let row: u16 = r.trim().parse().context("행 번호")?;
+        hwp_convert::delete_table_row(&mut doc, ti, row).map_err(|e| anyhow::anyhow!(e))?;
+        eprintln!("표 행 삭제: 표{ti} 행{row}");
+        edits += 1;
+    }
+
     if edits == 0 {
         eprintln!(
-            "경고: 적용된 편집이 없습니다 (--replace/--set-cell/--set-field/--set-format/--set-align 확인)"
+            "경고: 적용된 편집이 없습니다 (--replace/--set-cell/--set-field/--set-format/--set-align/--insert-para/--delete-para/--add-row/--delete-row 확인)"
         );
     }
 
-    write_output(&doc, output)?;
+    write_output(&doc, output, structural)?;
     if verify {
         verify_output(output)?;
     }
@@ -105,13 +170,15 @@ pub fn run(
     Ok(())
 }
 
-fn write_output(doc: &hwp_model::Document, output: &Path) -> anyhow::Result<()> {
+fn write_output(doc: &hwp_model::Document, output: &Path, structural: bool) -> anyhow::Result<()> {
     match output
         .extension()
         .and_then(|e| e.to_str())
         .map(str::to_ascii_lowercase)
         .as_deref()
     {
+        // 구조 편집은 삽입 문단/행에 불변식을 세우려 합성 경로를 강제한다.
+        Some("hwp") if structural => crate::commands::convert::write_hwp_structural(doc, output)?,
         Some("hwp") => crate::commands::convert::write_hwp_edited(doc, output)?,
         Some("hwpx") => {
             let warnings = hwpx::write_document(doc, output)?;

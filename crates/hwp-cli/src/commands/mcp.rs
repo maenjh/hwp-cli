@@ -323,15 +323,72 @@ fn tool_edit(args: &Value) -> Result<Vec<Value>, String> {
             summary.push(format!("문단정렬 {pattern:?}: {n}건"));
         }
     }
+    let mut structural = false;
+    if let Some(arr) = args.get("insert_para").and_then(Value::as_array) {
+        for p in arr {
+            let anchor = p
+                .get("anchor")
+                .and_then(Value::as_str)
+                .ok_or("insert_para 항목에 anchor 필요")?;
+            let text = p.get("text").and_then(Value::as_str).unwrap_or("");
+            let before = p.get("before").and_then(Value::as_bool).unwrap_or(false);
+            structural = true;
+            if hwp_convert::insert_paragraph(&mut doc, anchor, text, before) {
+                summary.push(format!("문단삽입 {anchor:?} {}", if before { "앞" } else { "뒤" }));
+            } else {
+                summary.push(format!("경고: 앵커 {anchor:?} 못 찾음"));
+            }
+        }
+    }
+    if let Some(arr) = args.get("delete_para").and_then(Value::as_array) {
+        for p in arr {
+            let matching = p
+                .get("matching")
+                .and_then(Value::as_str)
+                .ok_or("delete_para 항목에 matching 필요")?;
+            structural = true;
+            let n = hwp_convert::delete_paragraph(&mut doc, matching);
+            summary.push(format!("문단삭제 {matching:?}: {n}건"));
+        }
+    }
+    if let Some(arr) = args.get("add_row").and_then(Value::as_array) {
+        for r in arr {
+            let table = r.get("table").and_then(Value::as_u64).unwrap_or(0) as usize;
+            structural = true;
+            hwp_convert::add_table_row(&mut doc, table)?;
+            summary.push(format!("표{table} 행 추가"));
+        }
+    }
+    if let Some(arr) = args.get("delete_row").and_then(Value::as_array) {
+        for r in arr {
+            let table = r.get("table").and_then(Value::as_u64).unwrap_or(0) as usize;
+            let row = r.get("row").and_then(Value::as_u64).unwrap_or(0) as u16;
+            structural = true;
+            hwp_convert::delete_table_row(&mut doc, table, row)?;
+            summary.push(format!("표{table} 행{row} 삭제"));
+        }
+    }
     if summary.is_empty() {
         return Err(
-            "적용할 편집이 없습니다 (replace/set_cell/set_field/set_format/set_align 확인)"
+            "적용할 편집이 없습니다 (replace/set_cell/set_field/set_format/set_align/insert_para/delete_para/add_row/delete_row 확인)"
                 .to_string(),
         );
     }
 
-    crate::commands::convert::write_by_ext(&doc, Path::new(output), true, false)
-        .map_err(|e| e.to_string())?;
+    let out_path = Path::new(output);
+    let is_hwp = out_path
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(str::to_ascii_lowercase)
+        .as_deref()
+        == Some("hwp");
+    if structural && is_hwp {
+        // 구조 편집 hwp는 삽입 불변식을 세우려 합성 경로를 강제한다.
+        crate::commands::convert::write_hwp_structural(&doc, out_path).map_err(|e| e.to_string())?;
+    } else {
+        crate::commands::convert::write_by_ext(&doc, out_path, true, false)
+            .map_err(|e| e.to_string())?;
+    }
     Ok(vec![text_content(&format!(
         "편집 완료: {input} → {output}\n{}",
         summary.join("\n")
@@ -459,7 +516,20 @@ fn tool_defs() -> Vec<Value> {
                 "set_align": {"type": "array", "items": {"type": "object", "properties": {
                     "pattern": {"type": "string"},
                     "align": {"type": "string", "enum": ["left", "right", "center", "justify", "distribute", "divide"]}},
-                    "required": ["pattern", "align"]}, "description": "문단 정렬(매칭 문단)"}
+                    "required": ["pattern", "align"]}, "description": "문단 정렬(매칭 문단)"},
+                "insert_para": {"type": "array", "items": {"type": "object", "properties": {
+                    "anchor": {"type": "string"}, "text": {"type": "string"},
+                    "before": {"type": "boolean", "description": "true면 앵커 문단 앞(기본 뒤)"}},
+                    "required": ["anchor", "text"]}, "description": "문단 삽입(앵커 문단 앞/뒤, 모양 상속)"},
+                "delete_para": {"type": "array", "items": {"type": "object", "properties": {
+                    "matching": {"type": "string"}},
+                    "required": ["matching"]}, "description": "매칭 텍스트가 든 문단 삭제(최소 1문단 유지)"},
+                "add_row": {"type": "array", "items": {"type": "object", "properties": {
+                    "table": {"type": "integer"}},
+                    "required": ["table"]}, "description": "N번째 표 끝에 빈 행 추가(0-기반)"},
+                "delete_row": {"type": "array", "items": {"type": "object", "properties": {
+                    "table": {"type": "integer"}, "row": {"type": "integer"}},
+                    "required": ["table", "row"]}, "description": "N번째 표의 R행 삭제(0-기반)"}
             }, "required": ["input", "output"]}
         }),
         json!({
