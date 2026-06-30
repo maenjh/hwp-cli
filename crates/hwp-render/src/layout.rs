@@ -150,6 +150,8 @@ pub fn layout_document(
         // 하단에 그린다.
         let notes = footnote::collect_notes(&section.paragraphs);
         let mut page_notes: Vec<&Note> = Vec::new();
+        // 목록(번호/불릿) 카운터 — 구역 단위, 문서 순서로 진행.
+        let mut list_state = crate::list::ListState::default();
 
         for para in &section.paragraphs {
             skipped_controls += para
@@ -224,6 +226,8 @@ pub fn layout_document(
             page_notes.extend(footnote::para_notes(&notes, para));
             let tabs = crate::tab::tab_stops(doc, para);
             let geom = para_geometry(doc, para);
+            // 목록 마커(불릿/번호) — 문서 순서로 카운터 진행(목록 아니면 None).
+            let marker = list_state.marker(doc, para);
 
             // 이 문단의 첫 줄 상단 (표 앵커 위치)
             let mut para_top: Option<f32> = None;
@@ -253,6 +257,9 @@ pub fn layout_document(
                     } else {
                         left
                     };
+                    if let Some(m) = &marker {
+                        render_list_marker(&mut page, store, doc, m, left, baseline_y, max_size);
+                    }
                     let last_y =
                         place_wrapped(&mut page, items, x, baseline_y, avail, max_size * 1.6, &tabs);
                     content_bottom = last_y + max_size * 0.4 + geom.spacing_bottom;
@@ -336,6 +343,10 @@ pub fn layout_document(
                 let x = body_left + seg.col_start as f32 / 100.0 + shift;
                 if i == 0 {
                     para_top = Some(baseline_y - baseline_gap_pt);
+                    if let Some(m) = &marker {
+                        let size = items_max_size(&items).unwrap_or(line_height_pt.max(8.0));
+                        render_list_marker(&mut page, store, doc, m, x, baseline_y, size);
+                    }
                 }
                 let last_y =
                     place_wrapped(&mut page, items, x, baseline_y, wrap_width, line_advance, &tabs);
@@ -506,6 +517,23 @@ fn render_one_note(
         );
     }
     bottom.max(baseline + marker_size * 0.3)
+}
+
+/// 목록 마커(불릿/번호)를 텍스트 시작 왼쪽(매달린 위치)에 그린다.
+fn render_list_marker(
+    page: &mut PageList,
+    store: &mut FontStore,
+    doc: &Document,
+    marker: &str,
+    text_left: f32,
+    baseline: f32,
+    size: f32,
+) {
+    if let Some(run) = crate::shape::shape_plain(store, doc, marker, size, 0) {
+        let w = run.width_pt;
+        let x = (text_left - w - size * 0.3).max(0.0);
+        push_run(page, x, baseline, run);
+    }
 }
 
 /// Item을 (dx, dy)만큼 평행이동한 사본.

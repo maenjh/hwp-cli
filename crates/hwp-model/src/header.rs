@@ -20,6 +20,12 @@ pub struct DocHeader {
     pub tab_defs: Vec<RawEntry>,
     pub numberings: Vec<RawEntry>,
     pub bullets: Vec<RawEntry>,
+    /// 렌더 전용: `bullets`와 병렬인 글머리 문자(없으면 비어 있음 — 기본 `•`).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub bullet_chars: Vec<char>,
+    /// 렌더 전용: `numberings`와 병렬인 수준별 번호 형식(없으면 십진 기본).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub numbering_levels: Vec<Vec<NumLevel>>,
     pub para_shapes: Vec<ParaShape>,
     pub styles: Vec<Style>,
     /// ID_MAPPINGS 원본 카운트 배열 (버전별 길이 보존 — 쓰기 시 유도값과 대조)
@@ -175,6 +181,54 @@ impl ParaShape {
     pub fn alignment(&self) -> u8 {
         ((self.attr1 >> 2) & 0x7) as u8
     }
+
+    /// 문단 머리 종류 (bit23~24): 0=없음, 1=개요, 2=번호, 3=글머리표(불릿).
+    pub fn head_type(&self) -> u8 {
+        ((self.attr1 >> 23) & 0x3) as u8
+    }
+
+    /// 문단 수준 (bit25~27): 1~7.
+    pub fn head_level(&self) -> u8 {
+        (((self.attr1 >> 25) & 0x7) as u8).clamp(1, 7)
+    }
+}
+
+/// 번호 매기기 한 수준의 형식.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct NumLevel {
+    /// 시작 번호.
+    pub start: u32,
+    pub fmt: NumFmt,
+}
+
+impl Default for NumLevel {
+    fn default() -> Self {
+        Self {
+            start: 1,
+            fmt: NumFmt::Digit,
+        }
+    }
+}
+
+/// 번호 표기 형식.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum NumFmt {
+    /// 1, 2, 3
+    Digit,
+    /// 가, 나, 다
+    HangulSyllable,
+    /// ㄱ, ㄴ, ㄷ
+    HangulJamo,
+    /// ①, ②, ③
+    CircledDigit,
+    /// A, B, C
+    LatinUpper,
+    /// a, b, c
+    LatinLower,
+    /// I, II, III
+    RomanUpper,
+    /// i, ii, iii
+    RomanLower,
 }
 
 /// STYLE — 스타일 하나.

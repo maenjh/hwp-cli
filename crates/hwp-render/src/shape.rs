@@ -305,6 +305,9 @@ pub fn shape_plain(
         ratios: [100; LANG_COUNT],
         rel_sizes: [100; LANG_COUNT],
         text_color: color,
+        // 0xFFFFFFFF=음영 없음. 기본 0이면 "불투명 검정 배경"으로 해석돼 마커가
+        // 검은 박스로 덮인다(각주·수식·목록 마커 공통 — 검은바 트랩).
+        shade_color: 0xFFFF_FFFF,
         ..CharShape::default()
     };
     let lang = if text.chars().any(|c| ('가'..='힣').contains(&c)) {
@@ -333,6 +336,7 @@ fn note_mark_run(
     let mut cs = base.unwrap_or_else(|| CharShape {
         ratios: [100; LANG_COUNT],
         rel_sizes: [100; LANG_COUNT],
+        shade_color: 0xFFFF_FFFF,
         ..CharShape::default()
     });
     cs.base_size = ((base_size as f32) * 0.65).max(500.0) as i32;
