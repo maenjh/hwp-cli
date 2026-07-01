@@ -453,6 +453,7 @@ impl Furniture<'_> {
                     top,
                     self.body_width,
                     warnings,
+                    None,
                 );
             }
         }
@@ -470,6 +471,7 @@ impl Furniture<'_> {
                     top,
                     self.body_width,
                     warnings,
+                    None,
                 );
             }
         }
@@ -564,6 +566,7 @@ fn render_one_note(
             bottom,
             width - indent,
             warnings,
+            None,
         );
     }
     bottom.max(baseline + marker_size * 0.3)
@@ -752,6 +755,7 @@ fn layout_para_objects(
                         cy,
                         bw,
                         warnings,
+                        None,
                     );
                     max_bottom = max_bottom.max(inner);
                 }
@@ -908,6 +912,7 @@ fn layout_table(
                 0.0,
                 (cw - ml - mr).max(4.0),
                 &mut scratch_warn,
+                None, // 측정 패스: 마커 미표시(counter 미증가)
             )
         };
         content_h_by_cell.push(content_h);
@@ -932,6 +937,8 @@ fn layout_table(
     let col_x: Vec<f32> = prefix_sums(&col_w, x);
     let row_y: Vec<f32> = prefix_sums(&row_h, y);
 
+    // 표 셀 안 목록 카운터 — 이 표 안에서 셀 순서로 진행(표마다 리셋).
+    let mut cell_ls = crate::list::ListState::default();
     for (ci, cell) in table.cells.iter().enumerate() {
         let (c, r) = (cell.col as usize, cell.row as usize);
         if c >= cols || r >= rows {
@@ -982,6 +989,7 @@ fn layout_table(
             cy + mt + voff,
             (cw - ml - mr).max(4.0),
             warnings,
+            Some(&mut cell_ls), // 렌더 패스: 셀 목록 마커 그림
         );
 
         // 3) 테두리 (왼/오른/위/아래)
@@ -1127,6 +1135,7 @@ fn layout_box_paragraphs(
     origin_y: f32,
     width: f32,
     warnings: &mut Vec<String>,
+    list_state: Option<&mut crate::list::ListState>,
 ) -> f32 {
     layout_box_para_iter(
         doc,
@@ -1137,6 +1146,7 @@ fn layout_box_paragraphs(
         origin_y,
         width,
         warnings,
+        list_state,
     )
 }
 
@@ -1157,6 +1167,7 @@ fn layout_box_para_iter<'a>(
     origin_y: f32,
     width: f32,
     warnings: &mut Vec<String>,
+    mut list_state: Option<&mut crate::list::ListState>,
 ) -> f32 {
     let mut content_bottom = origin_y;
     // 흐름 하한: 캐시 줄은 올리지 않고, 흐름 배치 콘텐츠만 올린다 (함수 doc 참고).
@@ -1164,6 +1175,8 @@ fn layout_box_para_iter<'a>(
     for para in paras {
         let mut para_top: Option<f32> = None;
         let tabs = crate::tab::tab_stops(doc, para);
+        // 목록 마커(셀 안 번호/불릿) — 렌더 패스에서만 counter 진행(측정 패스는 None).
+        let marker = list_state.as_deref_mut().and_then(|ls| ls.marker(doc, para));
 
         if para.line_segs.is_empty() {
             if para.chars.is_empty() {
@@ -1177,6 +1190,9 @@ fn layout_box_para_iter<'a>(
                 let avail = (width - geom.left - geom.right).max(4.0);
                 let baseline_y = content_bottom + geom.spacing_top + max_size * 1.2;
                 para_top = Some(content_bottom + geom.spacing_top);
+                if let Some(m) = &marker {
+                    render_list_marker(page, store, doc, m, left, baseline_y, max_size);
+                }
                 let natural = items_width(&items);
                 let align = doc
                     .header
@@ -1228,6 +1244,18 @@ fn layout_box_para_iter<'a>(
                 let baseline_y = stored.max(flow_floor + gap_pt);
                 if i == 0 {
                     para_top = Some(baseline_y - gap_pt);
+                    if let Some(m) = &marker {
+                        let size = items_max_size(&items).unwrap_or(8.0);
+                        render_list_marker(
+                            page,
+                            store,
+                            doc,
+                            m,
+                            origin_x + seg.col_start as f32 / 100.0 + shift,
+                            baseline_y,
+                            size,
+                        );
+                    }
                 }
                 let wrap_width = if para.line_segs.len() == 1 {
                     seg_width_pt.max(4.0)
