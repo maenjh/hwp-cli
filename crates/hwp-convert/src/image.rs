@@ -90,7 +90,9 @@ fn ext_of(path: &Path) -> Result<String, String> {
         .ok_or_else(|| format!("이미지 확장자를 알 수 없습니다: {}", path.display()))?;
     match ext.as_str() {
         "png" | "jpg" | "jpeg" | "bmp" | "gif" => Ok(ext),
-        other => Err(format!("지원하지 않는 이미지 형식: {other:?} (png/jpg/bmp/gif)")),
+        other => Err(format!(
+            "지원하지 않는 이미지 형식: {other:?} (png/jpg/jpeg/bmp/gif)"
+        )),
     }
 }
 
@@ -272,9 +274,9 @@ mod tests {
             } if *code == GSO_CODE => *ctrl_index,
             _ => None,
         });
-        matches!(
-            para.controls[ext.unwrap() as usize],
-            Control::Picture(_)
+        assert!(
+            matches!(para.controls[ext.unwrap() as usize], Control::Picture(_)),
+            "앵커 ExtCtrl가 Picture 컨트롤을 가리켜야 한다"
         );
         // 96px → 96*7200/96 = 7200 HWPUNIT.
         assert_eq!(pic.width.0, 7200);
