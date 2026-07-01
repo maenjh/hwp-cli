@@ -17,9 +17,10 @@ pub fn run(
 ) -> anyhow::Result<()> {
     let format = format.unwrap_or_else(|| infer_format(output));
     let doc = load_document(input)?;
+    // --font-dir 미지정 시 번들 함초롬 글꼴(HWP_FONT_DIR/fonts)을 기본 로드.
     let opts = hwp_render::RenderOptions {
         dpi: dpi as f32,
-        font_dirs,
+        font_dirs: crate::commands::convert::resolve_font_dirs(font_dirs),
     };
 
     match format {

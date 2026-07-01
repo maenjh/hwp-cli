@@ -119,8 +119,8 @@ hwp convert report.hwpx  -o report.hwp   # hwpx → hwp 바이너리
 hwp convert report.hwp   -o report.md    # hwp → markdown
 hwp convert report.hwp   -o doc.json --embed-bin   # 이미지까지 임베드한 자급식 JSON
 
-# 렌더링 (함초롬 폰트 디렉터리 지정)
-hwp render report.hwp -o page.png --dpi 150 --font-dir ./fonts
+# 렌더링 (번들 함초롬 글꼴 자동 로드 — --font-dir 생략 시 HWP_FONT_DIR 또는 ./fonts)
+hwp render report.hwp -o page.png --dpi 150
 hwp render report.hwp -o page.svg --pages 1-3 --font-dir ./fonts
 hwp render report.hwp -o report.pdf --font-dir ./fonts   # 단일 멀티페이지 PDF(검색 가능)
 hwp convert report.hwp -o report.pdf   # convert로도 동일(.pdf는 렌더 출력) — 폰트는 시스템 글꼴 사용
