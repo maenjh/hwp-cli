@@ -90,9 +90,9 @@ pub fn run(
     }
 
     for spec in set_formats {
-        let (pattern, attrs) = spec.split_once(':').with_context(|| {
-            format!("--set-format 형식은 \"찾기:속성=값,…\" 입니다: {spec:?}")
-        })?;
+        let (pattern, attrs) = spec
+            .split_once(':')
+            .with_context(|| format!("--set-format 형식은 \"찾기:속성=값,…\" 입니다: {spec:?}"))?;
         let fmt = parse_char_format(attrs)?;
         let n = hwp_convert::set_char_format(&mut doc, pattern, &fmt);
         if n == 0 {
@@ -152,9 +152,10 @@ pub fn run(
     }
 
     for spec in add_rows {
-        let ti: usize = spec.trim().parse().with_context(|| {
-            format!("--add-row 형식은 표 인덱스(예: \"0\") 입니다: {spec:?}")
-        })?;
+        let ti: usize = spec
+            .trim()
+            .parse()
+            .with_context(|| format!("--add-row 형식은 표 인덱스(예: \"0\") 입니다: {spec:?}"))?;
         hwp_convert::add_table_row(&mut doc, ti).map_err(|e| anyhow::anyhow!(e))?;
         eprintln!("표 행 추가: 표{ti}");
         edits += 1;

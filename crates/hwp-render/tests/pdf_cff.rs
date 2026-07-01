@@ -23,7 +23,9 @@ fn find_cff_otf() -> Option<PathBuf> {
         };
         for entry in rd.flatten() {
             let p = entry.path();
-            if p.extension().and_then(|e| e.to_str()).map(|e| e.to_ascii_lowercase())
+            if p.extension()
+                .and_then(|e| e.to_str())
+                .map(|e| e.to_ascii_lowercase())
                 == Some("otf".to_string())
                 && let Ok(bytes) = std::fs::read(&p)
                 && bytes.starts_with(b"OTTO")
@@ -90,7 +92,10 @@ fn cff_otf_pdf_임베드_구조() {
     let has = |needle: &[u8]| pdf.windows(needle.len()).any(|w| w == needle);
     assert!(has(b"FontFile3"), "CFF는 FontFile3로 임베드되어야");
     assert!(has(b"CIDFontType0"), "CFF는 CIDFontType0여야");
-    assert!(has(b"/Subtype /OpenType") || has(b"OpenType"), "FontFile3 Subtype=OpenType");
+    assert!(
+        has(b"/Subtype /OpenType") || has(b"OpenType"),
+        "FontFile3 Subtype=OpenType"
+    );
     assert!(!has(b"FontFile2"), "CFF 경로에 FontFile2가 있으면 안 됨");
     assert!(has(b"Identity-H"), "합성 폰트 Identity-H 인코딩");
     assert!(has(b"ToUnicode"), "검색/복사용 ToUnicode CMap");

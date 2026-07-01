@@ -209,7 +209,12 @@ fn parse_paragraph(
                                     0
                                 };
                                 collect_shape(
-                                    reader, &name, kind, round_ratio, &mut generic, warnings,
+                                    reader,
+                                    &name,
+                                    kind,
+                                    round_ratio,
+                                    &mut generic,
+                                    warnings,
                                 )?;
                             } else {
                                 collect_sub_lists(reader, &name, &mut generic, warnings)?;

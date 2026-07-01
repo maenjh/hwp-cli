@@ -6,7 +6,8 @@
 //! 문단/행에 모든 불변식(0x0d·마지막문단 비트·카운트)이 적용된다.
 
 use hwp_model::{
-    Cell, CharShapeId, Control, Document, HwpChar, Paragraph, ParaShapeId, StyleId, Table, ctrl_char,
+    Cell, CharShapeId, Control, Document, HwpChar, ParaShapeId, Paragraph, StyleId, Table,
+    ctrl_char,
 };
 
 use crate::edit::find_match;
@@ -120,7 +121,12 @@ pub fn add_table_row(doc: &mut Document, table_index: usize) -> Result<(), Strin
         return Err("빈 표에는 행을 추가할 수 없습니다".to_string());
     }
     let last = table.rows - 1;
-    let row_cells: Vec<Cell> = table.cells.iter().filter(|c| c.row == last).cloned().collect();
+    let row_cells: Vec<Cell> = table
+        .cells
+        .iter()
+        .filter(|c| c.row == last)
+        .cloned()
+        .collect();
     if row_cells.is_empty() {
         return Err("마지막 행에 셀이 없습니다".to_string());
     }

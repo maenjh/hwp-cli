@@ -83,9 +83,15 @@ fn render_page(page: &PageList) -> String {
                 let skew_c = if run.italic { 0.2126 * s } else { 0.0 };
                 // 외곽선=채움없이 윤곽선만, 굵게=채움+스트로크, 기본=채움.
                 let main_attr = if run.outline {
-                    format!(r#" fill="none" stroke="{color}" stroke-width="{:.1}""#, 0.025 * upem)
+                    format!(
+                        r#" fill="none" stroke="{color}" stroke-width="{:.1}""#,
+                        0.025 * upem
+                    )
                 } else if run.bold {
-                    format!(r#" fill="{color}" stroke="{color}" stroke-width="{:.1}""#, 0.03 * upem)
+                    format!(
+                        r#" fill="{color}" stroke="{color}" stroke-width="{:.1}""#,
+                        0.03 * upem
+                    )
                 } else {
                     format!(r#" fill="{color}""#)
                 };

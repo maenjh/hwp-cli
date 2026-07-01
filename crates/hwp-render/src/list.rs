@@ -48,7 +48,10 @@ fn bullet_char(doc: &Document, id: usize) -> char {
     doc.header
         .bullet_chars
         .get(id)
-        .or_else(|| id.checked_sub(1).and_then(|i| doc.header.bullet_chars.get(i)))
+        .or_else(|| {
+            id.checked_sub(1)
+                .and_then(|i| doc.header.bullet_chars.get(i))
+        })
         .copied()
         .unwrap_or('•')
 }

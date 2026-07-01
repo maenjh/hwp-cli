@@ -44,12 +44,10 @@ pub fn render_pdf(list: &DisplayList, warnings: &mut Vec<String>) -> Result<Vec<
         for item in &page.items {
             if let Item::Glyphs { run, .. } = item {
                 let key = font_key(&run.font);
-                let idx = *font_index
-                    .entry(key)
-                    .or_insert_with(|| {
-                        fonts.push(FontInfo::new(run.font.clone()));
-                        fonts.len() - 1
-                    });
+                let idx = *font_index.entry(key).or_insert_with(|| {
+                    fonts.push(FontInfo::new(run.font.clone()));
+                    fonts.len() - 1
+                });
                 let f = &mut fonts[idx];
                 let chars: Vec<char> = run.text.chars().collect();
                 for (i, g) in run.glyphs.iter().enumerate() {
@@ -156,8 +154,13 @@ pub fn render_pdf(list: &DisplayList, warnings: &mut Vec<String>) -> Result<Vec<
                 } => match decode_image(data) {
                     Some(payload) => {
                         let id = alloc(&mut counter);
-                        let smask_id = matches!(&payload,
-                            ImagePayload::Raw { alpha_z: Some(_), .. })
+                        let smask_id = matches!(
+                            &payload,
+                            ImagePayload::Raw {
+                                alpha_z: Some(_),
+                                ..
+                            }
+                        )
                         .then(|| alloc(&mut counter));
                         let name = format!("Im{}", images.len());
                         content.save_state();
@@ -428,12 +431,7 @@ fn write_font(pdf: &mut Pdf, f: &FontInfo) -> Result<(), RenderError> {
 fn write_page(pdf: &mut Pdf, plan: &PagePlan, page_tree_id: Ref, fonts: &[FontInfo]) {
     for img in &plan.images {
         match &img.payload {
-            ImagePayload::Jpeg {
-                bytes,
-                w,
-                h,
-                gray,
-            } => {
+            ImagePayload::Jpeg { bytes, w, h, gray } => {
                 let mut x = pdf.image_xobject(img.id, bytes);
                 x.filter(Filter::DctDecode);
                 x.width(*w);
@@ -572,7 +570,8 @@ fn out_gid(subset_ok: bool, remapper: &GlyphRemapper, orig: u16) -> u16 {
 }
 
 fn glyph_width(face: &ttf_parser::Face<'_>, gid: u16) -> f32 {
-    face.glyph_hor_advance(ttf_parser::GlyphId(gid)).unwrap_or(0) as f32
+    face.glyph_hor_advance(ttf_parser::GlyphId(gid))
+        .unwrap_or(0) as f32
 }
 
 fn font_key(font: &Arc<LoadedFont>) -> (usize, u32) {

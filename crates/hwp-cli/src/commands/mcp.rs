@@ -353,7 +353,10 @@ fn tool_edit(args: &Value) -> Result<Vec<Value>, String> {
             let before = p.get("before").and_then(Value::as_bool).unwrap_or(false);
             structural = true;
             if hwp_convert::insert_paragraph(&mut doc, anchor, text, before) {
-                summary.push(format!("문단삽입 {anchor:?} {}", if before { "앞" } else { "뒤" }));
+                summary.push(format!(
+                    "문단삽입 {anchor:?} {}",
+                    if before { "앞" } else { "뒤" }
+                ));
             } else {
                 summary.push(format!("경고: 앵커 {anchor:?} 못 찾음"));
             }
@@ -403,7 +406,8 @@ fn tool_edit(args: &Value) -> Result<Vec<Value>, String> {
         == Some("hwp");
     if structural && is_hwp {
         // 구조 편집 hwp는 삽입 불변식을 세우려 합성 경로를 강제한다.
-        crate::commands::convert::write_hwp_structural(&doc, out_path).map_err(|e| e.to_string())?;
+        crate::commands::convert::write_hwp_structural(&doc, out_path)
+            .map_err(|e| e.to_string())?;
     } else {
         crate::commands::convert::write_by_ext(&doc, out_path, true, false)
             .map_err(|e| e.to_string())?;
@@ -600,6 +604,15 @@ mod tests {
         format!("{}/../../fixtures/{rel}", env!("CARGO_MANIFEST_DIR"))
     }
 
+    /// fixture 바이너리는 저장소에서 제외된다(로컬 전용). 없으면 `true`(스킵).
+    fn skip_if_no_fixtures() -> bool {
+        if std::path::Path::new(&fixture("hwp5/hello_world.hwp")).exists() {
+            return false;
+        }
+        eprintln!("스킵: fixtures 없음 — fixtures/README.md 참고");
+        true
+    }
+
     fn call(line: &str) -> Value {
         let resp = handle_request(line, &ctx()).expect("응답 있어야 함");
         serde_json::from_str(&resp).unwrap()
@@ -651,6 +664,9 @@ mod tests {
 
     #[test]
     fn call_hwp_read_json() {
+        if skip_if_no_fixtures() {
+            return;
+        }
         let line = format!(
             r#"{{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{{"name":"hwp_read","arguments":{{"path":"{}","format":"plain"}}}}}}"#,
             fixture("hwp5/hello_world.hwp")
@@ -663,6 +679,9 @@ mod tests {
 
     #[test]
     fn call_hwp_render_이미지() {
+        if skip_if_no_fixtures() {
+            return;
+        }
         let line = format!(
             r#"{{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{{"name":"hwp_render","arguments":{{"path":"{}","page":1,"dpi":96}}}}}}"#,
             fixture("hwp5/hello_world.hwp")

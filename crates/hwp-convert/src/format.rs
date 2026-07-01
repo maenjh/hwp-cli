@@ -315,7 +315,10 @@ mod tests {
                 ..Default::default()
             },
         );
-        assert!(!off.is_bold() && off.is_italic(), "bold만 꺼지고 나머지 유지");
+        assert!(
+            !off.is_bold() && off.is_italic(),
+            "bold만 꺼지고 나머지 유지"
+        );
     }
 
     #[test]

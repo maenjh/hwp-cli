@@ -345,7 +345,9 @@ pub fn apply_link_style(items: &mut [InlineItem], links: &[(u32, u32)]) {
     }
     for item in items.iter_mut() {
         if let InlineItem::Run(run) = item
-            && links.iter().any(|&(a, b)| run.start_wchar >= a && run.start_wchar < b)
+            && links
+                .iter()
+                .any(|&(a, b)| run.start_wchar >= a && run.start_wchar < b)
         {
             run.underline = true;
             run.color = LINK_BLUE;

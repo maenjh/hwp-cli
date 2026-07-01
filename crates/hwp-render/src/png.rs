@@ -143,7 +143,17 @@ fn render_page(page: &PageList, dpi: f32) -> Result<Pixmap, RenderError> {
                     let d = run.size_pt * 0.05 * if run.emboss { -1.0 } else { 1.0 };
                     draw_glyph_run(&mut pixmap, &face, run, *x, *y, px_scale, 0x00FF_FFFF, d, d);
                 }
-                draw_glyph_run(&mut pixmap, &face, run, *x, *y, px_scale, run.color, 0.0, 0.0);
+                draw_glyph_run(
+                    &mut pixmap,
+                    &face,
+                    run,
+                    *x,
+                    *y,
+                    px_scale,
+                    run.color,
+                    0.0,
+                    0.0,
+                );
             }
             Item::Path {
                 commands,
@@ -171,7 +181,8 @@ fn render_page(page: &PageList, dpi: f32) -> Result<Pixmap, RenderError> {
                                 let (r, g, b) = colorref_rgb(*c);
                                 paint.set_color_rgba8(r, g, b, 255);
                             }
-                            Fill::Gradient(grad) => match gradient_shader(grad, commands, px_scale) {
+                            Fill::Gradient(grad) => match gradient_shader(grad, commands, px_scale)
+                            {
                                 Some(sh) => paint.shader = sh,
                                 None => {
                                     let (r, g, b) = grad
