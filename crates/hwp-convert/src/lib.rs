@@ -5,6 +5,7 @@ pub mod edit;
 pub mod field;
 pub mod format;
 pub mod from_markdown;
+pub mod image;
 pub mod markdown;
 pub mod structure;
 
@@ -14,6 +15,7 @@ pub use edit::{replace_text, set_cell};
 pub use field::{FieldInfo, create_field, list_fields, set_field};
 pub use format::{CharFormat, set_char_format, set_para_align};
 pub use from_markdown::{default_header, from_markdown};
+pub use image::{ImageSize, insert_image};
 pub use markdown::to_markdown;
 pub use structure::{add_table_row, delete_paragraph, delete_table_row, insert_paragraph};
 
