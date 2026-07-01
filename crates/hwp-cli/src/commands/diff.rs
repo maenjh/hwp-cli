@@ -22,7 +22,7 @@ pub fn run(
         &doc,
         &hwp_render::RenderOptions {
             dpi: dpi as f32,
-            font_dirs,
+            font_dirs: crate::commands::convert::resolve_font_dirs(font_dirs),
         },
     )?;
     for line in &result.report {

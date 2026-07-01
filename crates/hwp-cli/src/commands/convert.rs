@@ -172,13 +172,23 @@ pub fn write_by_ext(
     Ok(())
 }
 
+/// `--font-dir`가 비었으면 `HWP_FONT_DIR`(없으면 `fonts/`)로 기본 폰트 디렉터리를 정한다.
+/// render·diff·convert(PDF)가 번들 함초롬 글꼴을 명시 인자 없이도 로드하도록 —
+/// 안 그러면 한글 기본 글꼴을 못 찾아 시스템 폰트로 대체돼 렌더 충실도가 크게 떨어진다.
+pub fn resolve_font_dirs(given: Vec<std::path::PathBuf>) -> Vec<std::path::PathBuf> {
+    if !given.is_empty() {
+        return given;
+    }
+    vec![std::path::PathBuf::from(
+        std::env::var("HWP_FONT_DIR").unwrap_or_else(|_| "fonts".into()),
+    )]
+}
+
 /// PDF 렌더 옵션 — 폰트는 `HWP_FONT_DIR`(없으면 `fonts/`)에서 해석.
 fn pdf_render_opts() -> hwp_render::RenderOptions {
-    let font_dir =
-        std::path::PathBuf::from(std::env::var("HWP_FONT_DIR").unwrap_or_else(|_| "fonts".into()));
     hwp_render::RenderOptions {
         dpi: 96.0,
-        font_dirs: vec![font_dir],
+        font_dirs: resolve_font_dirs(Vec::new()),
     }
 }
 
