@@ -6,6 +6,7 @@ pub mod edit;
 pub mod field;
 pub mod format;
 pub mod from_markdown;
+pub mod gso;
 pub mod html;
 pub mod image;
 pub mod markdown;

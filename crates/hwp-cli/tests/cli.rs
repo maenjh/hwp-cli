@@ -496,3 +496,43 @@ fn 변환_글상자_텍스트_필드_보존() {
 
     let _ = std::fs::remove_file(&out);
 }
+
+/// ★도형 보존: annual_report(디자인 문서, 도형 142개)의 hwp→hwpx 변환에서 장식 도형이
+/// 보존된다 — 이전엔 76개가 통째로 드롭. 잔여 드롭(ARC/이미지채움 v1 제외)은 소수만 허용.
+#[test]
+fn 변환_장식_도형_보존() {
+    if skip_if_no_fixtures() {
+        return;
+    }
+    let src = fixture("hwp5/annual_report.hwp");
+    if !src.exists() {
+        eprintln!("스킵: annual_report.hwp 없음");
+        return;
+    }
+    let out = tmp("hwp_cli_shapes.hwpx");
+    let r = hwp()
+        .arg("convert")
+        .arg(&src)
+        .arg("-o")
+        .arg(&out)
+        .output()
+        .unwrap();
+    assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+    let stderr = String::from_utf8_lossy(&r.stderr);
+    let drops = stderr.matches("DROP").count();
+    assert!(
+        drops <= 8,
+        "도형 드롭이 소수여야(이전 76): {drops}건\n{stderr}"
+    );
+
+    // 텍스트(글상자 포함)는 원본과 동일하게 추출돼야 한다.
+    let cat_hwp = hwp().arg("cat").arg(&src).output().unwrap();
+    let cat_hwpx = hwp().arg("cat").arg(&out).output().unwrap();
+    assert_eq!(
+        String::from_utf8_lossy(&cat_hwp.stdout),
+        String::from_utf8_lossy(&cat_hwpx.stdout),
+        "hwpx 텍스트 추출이 원본 hwp와 동일해야"
+    );
+
+    let _ = std::fs::remove_file(&out);
+}

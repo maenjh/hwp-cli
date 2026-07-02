@@ -405,3 +405,86 @@ fn 도형_shapegeom_hwpx_왕복() {
         .unwrap();
     assert_eq!(p.points, poly.points, "폴리곤 점 왕복");
 }
+
+/// hwp5-출신 장식 도형(텍스트 없는 gso)이 hwpx 도형 요소로 왕복된다 — 실쌍 바이트
+/// (코퍼스 원본.hwp의 SHAPE_COMPONENT+SC_LINE; 한글 export와 lineShape width=32 등 일치 검증됨).
+#[test]
+fn 장식_도형_hwp5출신_hwpx_왕복() {
+    use hwp_model::opaque::OpaqueRecord;
+    use hwp_model::{GenericControl, ShapeKind};
+
+    // 실쌍 SHAPE_COMPONENT(252B) + SC_LINE(20B) — hwp-convert/src/gso.rs 테스트와 동일 출처.
+    const LINE_SC: &str = "6e696c246e696c240000000000000000000001006400000064000000c8c1000004000000000000000000e4600000020000000100000000000000f03f000000000000000000000000000000000000000000000000000000000000f03f0000000000000000e17a14ae47017f400000000000000000000000000000000000000000000000007b14ae47e17aa43f0000000000000000000000000000f03f000000000000008000000000000000000000000000000000000000000000f03f00000000000000000000000020000000410000c000010000000000000000000000ffffffff00000000000000000000000000000000000000000001e76b390000";
+    const LINE_GEOM: &str = "0000000000000000640000006400000000000000";
+    fn hex(s: &str) -> Vec<u8> {
+        (0..s.len())
+            .step_by(2)
+            .map(|i| u8::from_str_radix(&s[i..i + 2], 16).unwrap())
+            .collect()
+    }
+
+    let mut doc = hwp_convert::from_markdown("본문\n\n둘째");
+    // gso 40B 공통 헤더: attr=0x042a2211(글자처럼·PARA/COLUMN), 49608×4 — 실쌍 값.
+    let mut data = vec![0u8; 40];
+    data[0..4].copy_from_slice(&0x042a_2211u32.to_le_bytes());
+    data[12..16].copy_from_slice(&49608i32.to_le_bytes());
+    data[16..20].copy_from_slice(&4i32.to_le_bytes());
+    let gso = GenericControl {
+        ctrl_id: *b"gso ",
+        data,
+        paragraph_lists: Vec::new(), // 텍스트 없음 = 장식 도형
+        extras: Vec::new(),
+        raw_children: vec![OpaqueRecord {
+            tag: 0x4C,
+            data: hex(LINE_SC),
+            children: vec![OpaqueRecord {
+                tag: 0x4E,
+                data: hex(LINE_GEOM),
+                children: Vec::new(),
+            }],
+        }],
+        gso_shapes: Vec::new(),
+        equation: None,
+    };
+    attach_gso(&mut doc.sections[0].paragraphs[1], gso);
+
+    let out = tmp("gso_deco.hwpx");
+    let warnings = hwpx::write_document(&doc, &out).unwrap();
+    assert!(!warnings.iter().any(|w| w.contains("DROP")), "{warnings:?}");
+
+    // 쓴 XML이 한글 export와 동형: hp:line + lineShape width=32 + treatAsChar=1 PARA/COLUMN.
+    let bytes = std::fs::read(&out).unwrap();
+    let mut zip = zip::ZipArchive::new(std::io::Cursor::new(bytes)).unwrap();
+    let mut xml = String::new();
+    {
+        use std::io::Read as _;
+        zip.by_name("Contents/section0.xml")
+            .unwrap()
+            .read_to_string(&mut xml)
+            .unwrap();
+    }
+    assert!(xml.contains("<hp:line "), "hp:line 없음: {xml}");
+    assert!(
+        xml.contains(r#"width="32" style="SOLID""#),
+        "lineShape 스타일: {xml}"
+    );
+    assert!(
+        xml.contains(r#"vertRelTo="PARA" horzRelTo="COLUMN""#),
+        "배치 역매핑: {xml}"
+    );
+
+    // 재읽기 → 도형 기하 복원.
+    let reread = hwpx::read_document(&out).unwrap().document;
+    let s = reread.sections[0]
+        .paragraphs
+        .iter()
+        .flat_map(|p| &p.controls)
+        .find_map(|c| match c {
+            hwp_model::Control::Generic(g) if !g.gso_shapes.is_empty() => Some(&g.gso_shapes[0]),
+            _ => None,
+        })
+        .expect("도형 재읽기");
+    assert_eq!(s.kind, ShapeKind::Line);
+    assert_eq!((s.w, s.h), (49608, 4));
+    assert_eq!(s.border_width, 32);
+}

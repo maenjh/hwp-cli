@@ -253,13 +253,12 @@ fn write_paragraph(
                         flush_text(out, &mut text_buf);
                         write_ir_shapes(out, doc, g, ids, bins, preserve_linesegs, warnings);
                     }
-                    Control::Generic(g)
-                        if g.ctrl_id == *b"gso " && !g.paragraph_lists.is_empty() =>
-                    {
-                        // hwp5-출신 글상자 — <hp:rect>+<hp:drawText>로 텍스트/필드/책갈피 보존.
+                    Control::Generic(g) if g.ctrl_id == *b"gso " => {
+                        // hwp5-출신 gso: 글상자(rect+drawText — 텍스트/필드/책갈피 보존)와
+                        // 장식 도형(SHAPE_COMPONENT → 도형 요소) 모두 방출.
                         open_run!(cur_shape);
                         flush_text(out, &mut text_buf);
-                        write_gso_textbox(out, doc, g, ids, bins, preserve_linesegs, warnings);
+                        write_gso(out, doc, g, ids, bins, preserve_linesegs, warnings);
                     }
                     Control::Generic(g) => {
                         warnings.push(format!(
@@ -519,10 +518,127 @@ fn write_draw_text(
     out.push_str("</hp:subList></hp:drawText>");
 }
 
-/// hwp5-출신 글상자(gso + 문단) → `<hp:rect>` + drawText. 기하/배치는 gso 공통 헤더에서,
-/// 테두리는 v1 없음(NONE — SHAPE_COMPONENT 스타일 파싱은 렌더 전용, 후속 과제).
+/// gso 공통 헤더의 attr 비트 + 오프셋으로 `<hp:pos …/>` 를 만든다(⑱ 역매핑 — 쌍 대조 검증).
+fn gso_pos_xml(attr: u32, voff: i32, hoff: i32) -> String {
+    let treat = attr & 1;
+    let vrel = ((attr >> 3) & 0x3) as u8;
+    let valign = ((attr >> 5) & 0x7) as u8;
+    let hrel = ((attr >> 8) & 0x3) as u8;
+    let halign = ((attr >> 10) & 0x7) as u8;
+    format!(
+        r##"<hp:pos treatAsChar="{treat}" affectLSpacing="0" flowWithText="1" allowOverlap="0" holdAnchorAndSO="0" vertRelTo="{}" horzRelTo="{}" vertAlign="{}" horzAlign="{}" vertOffset="{voff}" horzOffset="{hoff}"/>"##,
+        vert_rel_to_name(vrel),
+        horz_rel_to_name(hrel),
+        vert_align_name(valign),
+        horz_align_name(halign),
+    )
+}
+
+/// 도형 하나를 OWPML 요소로 방출한다(스캐폴드+lineShape+채움+점+선택 drawText+sz/pos).
+/// hwpx-출신(Arm A)과 hwp5-출신(write_gso) 모두 이 함수를 거친다.
 #[allow(clippy::too_many_arguments)]
-fn write_gso_textbox(
+fn write_shape_element(
+    out: &mut String,
+    doc: &Document,
+    s: &hwp_model::ShapeGeom,
+    ids: &mut IdSeq,
+    bins: &mut BinCollector,
+    sz: (i32, i32),
+    pos_xml: &str,
+    text: Option<&GenericControl>,
+    preserve_linesegs: bool,
+    warnings: &mut Vec<String>,
+) {
+    let el = match s.kind {
+        ShapeKind::Rect => "rect",
+        ShapeKind::Ellipse => "ellipse",
+        ShapeKind::Line => "line",
+        ShapeKind::Polygon => "polygon",
+        ShapeKind::Curve => "curve",
+        ShapeKind::Arc => "arc",
+    };
+    let _ = write!(
+        out,
+        r##"<hp:{el} id="{}" zOrder="0" numberingType="PICTURE" textWrap="TOP_AND_BOTTOM" textFlow="BOTH_SIDES" lock="0" dropcapstyle="None" href="" groupLevel="0" instid="{}""##,
+        ids.next(),
+        ids.next(),
+    );
+    if matches!(s.kind, ShapeKind::Rect) {
+        let _ = write!(out, r##" ratio="{}""##, s.round_ratio);
+    }
+    out.push('>');
+    write_obj_scaffold(out, sz.0, sz.1);
+    if s.border_width <= 0 {
+        out.push_str(
+            r##"<hp:lineShape color="#000000" width="0" style="NONE" endCap="FLAT" headStyle="NORMAL" tailStyle="NORMAL" headfill="1" tailfill="1" headSz="SMALL_SMALL" tailSz="SMALL_SMALL" outlineStyle="NORMAL" alpha="0"/>"##,
+        );
+    } else {
+        let _ = write!(
+            out,
+            r##"<hp:lineShape color="{}" width="{}" style="{}" endCap="FLAT" headStyle="{}" tailStyle="{}" headfill="1" tailfill="1" headSz="SMALL_SMALL" tailSz="SMALL_SMALL" outlineStyle="NORMAL" alpha="0"/>"##,
+            color_hex(s.border_color),
+            s.border_width,
+            line_style_name(s.border_style),
+            arrow_name(s.arrow_start),
+            arrow_name(s.arrow_end),
+        );
+    }
+    if let Some(gr) = &s.fill_gradient {
+        // reader parse_gradation의 역: type/angle 속성 + color 자식들.
+        let _ = write!(
+            out,
+            r##"<hc:fillBrush><hc:gradation type="{}" angle="{}" centerX="0" centerY="0" step="255" colorNum="{}" stepCenter="50" alpha="0">"##,
+            if gr.radial { "RADIAL" } else { "LINEAR" },
+            gr.angle_deg.round() as i32,
+            gr.stops.len(),
+        );
+        for (_, c) in &gr.stops {
+            let _ = write!(out, r##"<hc:color value="{}"/>"##, color_hex(*c));
+        }
+        out.push_str("</hc:gradation></hc:fillBrush>");
+    } else if s.fill != 0xFFFF_FFFF {
+        let _ = write!(
+            out,
+            r##"<hc:fillBrush><hc:winBrush faceColor="{}" hatchColor="#000000" alpha="0"/></hc:fillBrush>"##,
+            color_hex(s.fill),
+        );
+    }
+    match s.kind {
+        ShapeKind::Line => {
+            // 정품 형식은 startPt/endPt. 점 없으면 bbox 대각(reader는 sz/pos로 왕복).
+            let (p0, p1) = if s.points.len() >= 2 {
+                (s.points[0], s.points[1])
+            } else {
+                ((0, 0), (s.w, s.h))
+            };
+            let _ = write!(
+                out,
+                r##"<hc:startPt x="{}" y="{}"/><hc:endPt x="{}" y="{}"/>"##,
+                p0.0, p0.1, p1.0, p1.1,
+            );
+        }
+        ShapeKind::Polygon | ShapeKind::Curve => {
+            for (pi, (px, py)) in s.points.iter().enumerate() {
+                let _ = write!(out, r##"<hc:pt{pi} x="{px}" y="{py}"/>"##);
+            }
+        }
+        _ => {}
+    }
+    if let Some(g) = text {
+        write_draw_text(out, doc, g, ids, bins, preserve_linesegs, warnings);
+    }
+    let _ = write!(
+        out,
+        r##"<hp:sz width="{}" widthRelTo="ABSOLUTE" height="{}" heightRelTo="ABSOLUTE" protect="0"/>{pos_xml}<hp:outMargin left="0" right="0" top="0" bottom="0"/></hp:{el}>"##,
+        sz.0, sz.1,
+    );
+}
+
+/// hwp5-출신 gso를 방출한다. 텍스트가 있으면 글상자(`<hp:rect>`+drawText, 테두리/채움은
+/// SHAPE_COMPONENT 첫 도형 스타일에서 복원), 없으면 장식 도형들을 도형 요소로 방출.
+/// 기하/배치는 gso 공통 헤더 + shapes_from_raw(실쌍 대조 검증) — 도형 해석 실패 시 드롭 경고.
+#[allow(clippy::too_many_arguments)]
+fn write_gso(
     out: &mut String,
     doc: &Document,
     g: &GenericControl,
@@ -532,33 +648,63 @@ fn write_gso_textbox(
     warnings: &mut Vec<String>,
 ) {
     let Some((attr, voff, hoff, w, h)) = parse_gso_header(&g.data) else {
-        warnings.push("DROP: gso 공통 헤더 파싱 실패 — 글상자 드롭".to_string());
+        warnings.push("DROP: gso 공통 헤더 파싱 실패 — 드롭".to_string());
         return;
     };
-    let treat = attr & 1;
-    let vrel = ((attr >> 3) & 0x3) as u8;
-    let valign = ((attr >> 5) & 0x7) as u8;
-    let hrel = ((attr >> 8) & 0x3) as u8;
-    let halign = ((attr >> 10) & 0x7) as u8;
-    let _ = write!(
-        out,
-        r##"<hp:rect id="{}" zOrder="0" numberingType="PICTURE" textWrap="TOP_AND_BOTTOM" textFlow="BOTH_SIDES" lock="0" dropcapstyle="None" href="" groupLevel="0" instid="{}" ratio="0">"##,
-        ids.next(),
-        ids.next(),
-    );
-    write_obj_scaffold(out, w, h);
-    out.push_str(
-        r##"<hp:lineShape color="#000000" width="0" style="NONE" endCap="FLAT" headStyle="NORMAL" tailStyle="NORMAL" headfill="1" tailfill="1" headSz="SMALL_SMALL" tailSz="SMALL_SMALL" outlineStyle="NORMAL" alpha="0"/>"##,
-    );
-    write_draw_text(out, doc, g, ids, bins, preserve_linesegs, warnings);
-    let _ = write!(
-        out,
-        r##"<hp:sz width="{w}" widthRelTo="ABSOLUTE" height="{h}" heightRelTo="ABSOLUTE" protect="0"/><hp:pos treatAsChar="{treat}" affectLSpacing="0" flowWithText="1" allowOverlap="0" holdAnchorAndSO="0" vertRelTo="{}" horzRelTo="{}" vertAlign="{}" horzAlign="{}" vertOffset="{voff}" horzOffset="{hoff}"/><hp:outMargin left="0" right="0" top="0" bottom="0"/></hp:rect>"##,
-        vert_rel_to_name(vrel),
-        horz_rel_to_name(hrel),
-        vert_align_name(valign),
-        horz_align_name(halign),
-    );
+    let shapes = hwp_convert::gso::shapes_from_raw(&g.raw_children);
+    let has_text = !g.paragraph_lists.is_empty();
+    if has_text {
+        // 글상자: rect 하나 + 첫 도형의 테두리/채움 스타일(없으면 무테두리).
+        let style = shapes.first();
+        let rect = hwp_model::ShapeGeom {
+            kind: ShapeKind::Rect,
+            x: 0,
+            y: 0,
+            w,
+            h,
+            points: Vec::new(),
+            fill: style.map_or(0xFFFF_FFFF, |s| s.fill),
+            fill_gradient: style.and_then(|s| s.fill_gradient.clone()),
+            border_color: style.map_or(0xFFFF_FFFF, |s| s.border_color),
+            border_width: style.map_or(0, |s| s.border_width),
+            round_ratio: style.map_or(0, |s| s.round_ratio),
+            border_style: style.map_or(0, |s| s.border_style),
+            arrow_start: 0,
+            arrow_end: 0,
+        };
+        let pos = gso_pos_xml(attr, voff, hoff);
+        write_shape_element(
+            out,
+            doc,
+            &rect,
+            ids,
+            bins,
+            (w, h),
+            &pos,
+            Some(g),
+            preserve_linesegs,
+            warnings,
+        );
+    } else if shapes.is_empty() {
+        warnings.push("DROP: gso 도형 해석 실패(ARC/이미지채움 등) — 드롭".to_string());
+    } else {
+        // 장식 도형: 도형별 요소. 배치 = gso 오프셋 + 박스 내 도형 오프셋.
+        for s in &shapes {
+            let pos = gso_pos_xml(attr, voff + s.y, hoff + s.x);
+            write_shape_element(
+                out,
+                doc,
+                s,
+                ids,
+                bins,
+                (s.w.max(1), s.h.max(1)),
+                &pos,
+                None,
+                preserve_linesegs,
+                warnings,
+            );
+        }
+    }
 }
 
 /// hwpx-출신 구조화 도형(ShapeGeom) → OWPML 요소(reader `collect_shape`의 역).
@@ -575,73 +721,22 @@ fn write_ir_shapes(
     warnings: &mut Vec<String>,
 ) {
     for (i, s) in g.gso_shapes.iter().enumerate() {
-        let el = match s.kind {
-            ShapeKind::Rect => "rect",
-            ShapeKind::Ellipse => "ellipse",
-            ShapeKind::Line => "line",
-            ShapeKind::Polygon => "polygon",
-            ShapeKind::Curve => "curve",
-            ShapeKind::Arc => "arc",
-        };
-        let _ = write!(
-            out,
-            r##"<hp:{el} id="{}" zOrder="0" numberingType="PICTURE" textWrap="TOP_AND_BOTTOM" textFlow="BOTH_SIDES" lock="0" dropcapstyle="None" href="" groupLevel="0" instid="{}""##,
-            ids.next(),
-            ids.next(),
+        let pos = format!(
+            r##"<hp:pos treatAsChar="0" affectLSpacing="0" flowWithText="1" allowOverlap="0" holdAnchorAndSO="0" vertRelTo="PAPER" horzRelTo="PAPER" vertAlign="TOP" horzAlign="LEFT" vertOffset="{}" horzOffset="{}"/>"##,
+            s.y, s.x,
         );
-        if matches!(s.kind, ShapeKind::Rect) {
-            let _ = write!(out, r##" ratio="{}""##, s.round_ratio);
-        }
-        out.push('>');
-        write_obj_scaffold(out, s.w, s.h);
-        let style = if s.border_width <= 0 {
-            "NONE"
-        } else {
-            line_style_name(s.border_style)
-        };
-        let _ = write!(
+        let text = if i == 0 { Some(g) } else { None };
+        write_shape_element(
             out,
-            r##"<hp:lineShape color="{}" width="{}" style="{style}" endCap="FLAT" headStyle="{}" tailStyle="{}" headfill="1" tailfill="1" headSz="SMALL_SMALL" tailSz="SMALL_SMALL" outlineStyle="NORMAL" alpha="0"/>"##,
-            color_hex(s.border_color),
-            s.border_width.max(0),
-            arrow_name(s.arrow_start),
-            arrow_name(s.arrow_end),
-        );
-        if s.fill != 0xFFFF_FFFF {
-            let _ = write!(
-                out,
-                r##"<hc:fillBrush><hc:winBrush faceColor="{}" hatchColor="#000000" alpha="0"/></hc:fillBrush>"##,
-                color_hex(s.fill),
-            );
-        }
-        match s.kind {
-            ShapeKind::Line => {
-                // 정품 형식은 startPt/endPt. 점 없으면 bbox 대각(reader는 sz/pos로 왕복).
-                let (p0, p1) = if s.points.len() >= 2 {
-                    (s.points[0], s.points[1])
-                } else {
-                    ((0, 0), (s.w, s.h))
-                };
-                let _ = write!(
-                    out,
-                    r##"<hc:startPt x="{}" y="{}"/><hc:endPt x="{}" y="{}"/>"##,
-                    p0.0, p0.1, p1.0, p1.1,
-                );
-            }
-            ShapeKind::Polygon | ShapeKind::Curve => {
-                for (pi, (px, py)) in s.points.iter().enumerate() {
-                    let _ = write!(out, r##"<hc:pt{pi} x="{px}" y="{py}"/>"##);
-                }
-            }
-            _ => {}
-        }
-        if i == 0 {
-            write_draw_text(out, doc, g, ids, bins, preserve_linesegs, warnings);
-        }
-        let _ = write!(
-            out,
-            r##"<hp:sz width="{}" widthRelTo="ABSOLUTE" height="{}" heightRelTo="ABSOLUTE" protect="0"/><hp:pos treatAsChar="0" affectLSpacing="0" flowWithText="1" allowOverlap="0" holdAnchorAndSO="0" vertRelTo="PAPER" horzRelTo="PAPER" vertAlign="TOP" horzAlign="LEFT" vertOffset="{}" horzOffset="{}"/><hp:outMargin left="0" right="0" top="0" bottom="0"/></hp:{el}>"##,
-            s.w, s.h, s.y, s.x,
+            doc,
+            s,
+            ids,
+            bins,
+            (s.w, s.h),
+            &pos,
+            text,
+            preserve_linesegs,
+            warnings,
         );
     }
 }
