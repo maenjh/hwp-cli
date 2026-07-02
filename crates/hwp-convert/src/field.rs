@@ -432,7 +432,7 @@ pub fn make_field_ctrl_data(name: &str) -> Vec<u8> {
 /// data에 명령(하이퍼링크 URL 등)을 싣는다.
 fn make_field_control(ctrl_id: [u8; 4], name: Option<&str>, command: Option<&str>) -> Control {
     let data = match command {
-        Some(cmd) => make_field_command_data(cmd),
+        Some(cmd) => make_field_command_data(&ctrl_id, cmd),
         None => vec![0u8; 11], // 속성4 기타1 len2=0 id4
     };
     let raw_children = match name {
@@ -454,17 +454,37 @@ fn make_field_control(ctrl_id: [u8; 4], name: Option<&str>, command: Option<&str
     })
 }
 
-/// 필드 레코드 data: 속성(4)=0x00008800 기타(1) len(2) WCHAR[len] id(4) trailing(4).
-/// 정품 %hlk 구조 복제 — parse_command은 command만 읽으므로 id/trailing=0은 무해.
-fn make_field_command_data(command: &str) -> Vec<u8> {
-    let mut data = vec![0x00, 0x88, 0x00, 0x00, 0x00]; // attr=0x00008800, etc=0
+/// 필드 커맨드 레코드 data: 속성(4) 기타(1) len(2) WCHAR[len] **id(4≠0)** trailing(4).
+/// 종류별 속성/기타(정품 실측): %hlk=(0x00008800,0) · %fmu=(0,0x08) · 기타=(0,0).
+/// **id는 반드시 비영** — 한글은 id=0 필드를 하이퍼링크/필드로 인식하지 않는다(실기 확인:
+/// id=0이면 %hlk가 평문 취급, 정품 work_report %hlk는 id=0xd707bf6d). command 해시로
+/// 결정론적 비영 id를 부여(같은 명령=같은 id, 서로 다른 URL=다른 id).
+pub fn make_field_command_data(ctrl_id: &[u8; 4], command: &str) -> Vec<u8> {
+    let (attr, etc): (u32, u8) = match ctrl_id {
+        b"%hlk" => (0x0000_8800, 0),
+        b"%fmu" => (0x0000_0000, 0x08),
+        _ => (0x0000_0000, 0),
+    };
+    let mut data = attr.to_le_bytes().to_vec();
+    data.push(etc);
     let units: Vec<u16> = command.encode_utf16().collect();
     data.extend((units.len() as u16).to_le_bytes());
     for u in units {
         data.extend(u.to_le_bytes());
     }
-    data.extend([0u8; 8]); // id(4)=0 + trailing(4)=0
+    data.extend(field_instance_id(command).to_le_bytes()); // id(4) ≠ 0
+    data.extend([0u8; 4]); // trailing(4)=0
     data
+}
+
+/// 명령 문자열에서 결정론적 비영 필드 instance id(FNV-1a 32bit, 0이면 1로 보정).
+fn field_instance_id(command: &str) -> u32 {
+    let mut h: u32 = 0x811c_9dc5;
+    for b in command.bytes() {
+        h ^= u32::from(b);
+        h = h.wrapping_mul(0x0100_0193);
+    }
+    if h == 0 { 1 } else { h }
 }
 
 /// 하이퍼링크 필드 커맨드: `{URL};1;0;0;` — URL 특수문자를 정품 규칙으로 백슬래시 이스케이프.
@@ -861,17 +881,34 @@ mod tests {
 
     #[test]
     fn make_field_command_data_바이트() {
-        // 정품 %hlk data 구조: attr=0x00008800·etc=0·len(2)·WCHAR·id(4)·trailing(4).
+        // 정품 %hlk data 구조: attr=0x00008800·etc=0·len(2)·WCHAR·id(4≠0)·trailing(4).
         let cmd = "http\\://hangeul.naver.com/font;1;0;0;";
-        let data = make_field_command_data(cmd);
+        let data = make_field_command_data(b"%hlk", cmd);
         assert_eq!(&data[0..5], &[0x00, 0x88, 0x00, 0x00, 0x00]); // attr+etc
         let len = u16::from_le_bytes([data[5], data[6]]) as usize;
         assert_eq!(len, cmd.encode_utf16().count());
         assert_eq!(len, 37); // 정품 work_report %hlk와 동일 길이
         // parse_command이 커맨드를 그대로 복원한다.
         assert_eq!(parse_command(&data).as_deref(), Some(cmd));
-        // 커맨드 뒤 id(4)+trailing(4)=0.
-        assert_eq!(&data[7 + len * 2..], &[0u8; 8]);
+        // ★id(4)는 비영이어야 한글이 하이퍼링크로 인식한다(실기 확인).
+        let id = u32::from_le_bytes([
+            data[7 + len * 2],
+            data[8 + len * 2],
+            data[9 + len * 2],
+            data[10 + len * 2],
+        ]);
+        assert_ne!(id, 0, "필드 id는 비영");
+        // trailing(4)=0.
+        assert_eq!(&data[11 + len * 2..], &[0u8; 4]);
+    }
+
+    #[test]
+    fn make_field_command_data_종류별_속성() {
+        // %fmu는 정품 실측 attr=0·etc=0x08, %hlk는 attr=0x00008800.
+        let fmu = make_field_command_data(b"%fmu", "=SUM(A1:A2)");
+        assert_eq!(&fmu[0..5], &[0x00, 0x00, 0x00, 0x00, 0x08]);
+        let hlk = make_field_command_data(b"%hlk", "x;1;0;0;");
+        assert_eq!(&hlk[0..5], &[0x00, 0x88, 0x00, 0x00, 0x00]);
     }
 
     #[test]
