@@ -550,7 +550,7 @@ fn write_draw_text(
     ids: &mut IdSeq,
     bins: &mut BinCollector,
     width: i32,
-    preserve_linesegs: bool,
+    _preserve_linesegs: bool,
     warnings: &mut Vec<String>,
 ) {
     if g.paragraph_lists.is_empty() {
@@ -563,16 +563,10 @@ fn write_draw_text(
     );
     for list in &g.paragraph_lists {
         for para in &list.paragraphs {
-            write_paragraph(
-                out,
-                doc,
-                para,
-                ids,
-                bins,
-                false,
-                preserve_linesegs,
-                warnings,
-            );
+            // 도형 텍스트는 항상 linesegarray를 방출한다(정품 실측 — 한글은 글상자 문단에
+            // 줄배치를 항상 담는다). line_segs가 없으면 no-op이라 안전. 본문(전역
+            // preserve_linesegs)과 무관하게 강제.
+            write_paragraph(out, doc, para, ids, bins, false, true, warnings);
         }
     }
     out.push_str(
