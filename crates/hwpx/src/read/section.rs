@@ -469,9 +469,11 @@ fn parse_ctrl(
                     } else {
                         None
                     };
+                    // 필드 커맨드 data는 hwp-convert의 공용 생성기로(종류별 attr/etc +
+                    // 비영 id — 한글이 %hlk를 하이퍼링크로 인식하는 데 필수).
                     let data = command
                         .as_deref()
-                        .map(encode_field_command)
+                        .map(|c| hwp_convert::field::make_field_command_data(&ctrl_id, c))
                         .unwrap_or_default();
                     let generic = GenericControl {
                         ctrl_id,
@@ -589,18 +591,6 @@ fn read_field_command(reader: &mut XmlReader<'_>) -> Result<Option<String>> {
         }
     }
     Ok(command)
-}
-
-/// 명령 문자열 → hwp5 필드 레코드 data(`속성4 기타1 len2 WCHAR[len] id4`) — parse_command의 역.
-fn encode_field_command(cmd: &str) -> Vec<u8> {
-    let units: Vec<u16> = cmd.encode_utf16().collect();
-    let mut data = vec![0u8; 5]; // 속성(4) + 기타(1)
-    data.extend((units.len() as u16).to_le_bytes());
-    for u in units {
-        data.extend(u.to_le_bytes());
-    }
-    data.extend([0u8; 4]); // id
-    data
 }
 
 /// hwpx vertRelTo → hwp5 코드 (PAPER=0, PAGE=1, PARA=2).
