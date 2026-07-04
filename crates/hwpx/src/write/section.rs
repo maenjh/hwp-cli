@@ -816,7 +816,7 @@ fn write_gso(
             bins,
             (w, h),
             &pos,
-            zorder,
+            zorder * Z_SCALE,
             Some(g),
             preserve_linesegs,
             warnings,
@@ -825,8 +825,10 @@ fn write_gso(
         warnings.push("DROP: gso 도형 해석 실패(ARC/이미지채움 등) — 드롭".to_string());
     } else {
         // 장식 도형: 도형별 요소. 배치 = gso 오프셋 + 박스 내 도형 오프셋.
-        // 한 gso 안 여러 도형은 gso z-order를 공유(annual은 대부분 1도형/gso라 고유).
-        for s in &shapes {
+        // ★그룹 도형(도넛=회색+흰 구멍 등, 한 gso 다중 도형)은 gso z-order를 공유하면
+        // z 충돌 → 한글이 하나만 그리고 나머지를 스킵(도넛 미렌더 원인, 실기 확정).
+        // 전체 z를 Z_SCALE 배로 늘리고 도형 인덱스를 더해 고유화(상대 순서 보존).
+        for (i, s) in shapes.iter().enumerate() {
             let pos = gso_pos_xml(attr, voff + s.y, hoff + s.x);
             write_shape_element(
                 out,
@@ -836,7 +838,7 @@ fn write_gso(
                 bins,
                 (s.w.max(1), s.h.max(1)),
                 &pos,
-                zorder,
+                zorder * Z_SCALE + i as i32,
                 None,
                 preserve_linesegs,
                 warnings,
@@ -844,6 +846,10 @@ fn write_gso(
         }
     }
 }
+
+/// gso z-order 스케일 배수 — 그룹 내 도형에 고유 z를 주면서(base*Z_SCALE+index) gso 간
+/// 상대 순서를 보존한다. 한 gso 최대 도형 수 여유(<64)로 인접 gso와 충돌 없음.
+const Z_SCALE: i32 = 64;
 
 /// hwpx-출신 구조화 도형(ShapeGeom) → OWPML 요소(reader `collect_shape`의 역).
 /// 텍스트(paragraph_lists)는 첫 도형에 drawText로 부착한다. 배치(relTo 등)는 ShapeGeom이
