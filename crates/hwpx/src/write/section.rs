@@ -677,8 +677,10 @@ fn write_shape_element(
             arrow_name(s.arrow_end),
         );
     }
-    // fillBrush는 채움이 없어도 항상 방출한다(정품 실측 — 흰색 불투명). 생략하면 한글이
-    // 도형을 그리지 않는다.
+    // fillBrush는 **채움이 있을 때만** 방출한다. 무채움(s.fill=0xFFFF_FFFF)을 불투명
+    // 흰색으로 내보내면(㉙ 버그) 투명이어야 할 가이드 도형이 불투명 흰 원반이 되어 한글
+    // 에서 뒤 내용을 덮는다(annual 6쪽 링 다이어그램 미렌더 원인 — fill 플래그 대조 확정).
+    // 도넛 구멍은 solid 흰색(0x00FFFFFF)이라 fillBrush 유지, 가이드원(무채움)만 투명.
     if let Some(gr) = &s.fill_gradient {
         // reader parse_gradation의 역: type/angle 속성 + color 자식들.
         let _ = write!(
@@ -692,15 +694,11 @@ fn write_shape_element(
             let _ = write!(out, r##"<hc:color value="{}"/>"##, color_hex(*c));
         }
         out.push_str("</hc:gradation></hc:fillBrush>");
-    } else {
-        let face = if s.fill == 0xFFFF_FFFF {
-            "#FFFFFF".to_string()
-        } else {
-            color_hex(s.fill)
-        };
+    } else if s.fill != 0xFFFF_FFFF {
         let _ = write!(
             out,
-            r##"<hc:fillBrush><hc:winBrush faceColor="{face}" hatchColor="#000000" alpha="0"/></hc:fillBrush>"##,
+            r##"<hc:fillBrush><hc:winBrush faceColor="{}" hatchColor="#000000" alpha="0"/></hc:fillBrush>"##,
+            color_hex(s.fill),
         );
     }
     // shadow(type=NONE)도 정품 실측 필수 요소.
