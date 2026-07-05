@@ -199,12 +199,13 @@ pub fn default_header() -> hwp_model::DocHeader {
             },
             ..BorderFill::default()
         },
-        // 3 (1-based id 4) 인용문: 좌측 회색 막대(1.0mm), 나머지 변 없음.
+        // 3 (1-based id 4) 인용문: 좌측 회색 막대(1.5mm), 나머지 변 없음. 한글이 hwpx 문단
+        // 테두리를 hwp5보다 얇게 그려서, 1.0mm→1.5mm로 올려 hwpx에서도 또렷하게 보이게 함.
         BorderFill {
             sides: [
                 BorderLine {
                     line_type: 1,
-                    width: 10,
+                    width: 11,
                     color: 0x0080_8080,
                 },
                 BorderLine::default(),
